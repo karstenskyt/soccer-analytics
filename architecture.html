@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Soccer Analytics - Architecture Explorer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #232736;
+    --border: #2e3345;
+    --text: #e2e4ea;
+    --text-dim: #8b90a0;
+    --green: #22c55e;
+    --green-dim: #16a34a;
+    --green-bg: rgba(34,197,94,0.1);
+    --blue: #3b82f6;
+    --blue-bg: rgba(59,130,246,0.1);
+    --amber: #f59e0b;
+    --amber-bg: rgba(245,158,11,0.1);
+    --purple: #a855f7;
+    --purple-bg: rgba(168,85,247,0.1);
+    --red: #ef4444;
+    --red-bg: rgba(239,68,68,0.1);
+    --cyan: #06b6d4;
+    --cyan-bg: rgba(6,182,212,0.1);
+  }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
+  .layout { display: grid; grid-template-columns: 280px 1fr; grid-template-rows: 1fr auto; height: 100vh; }
+  .sidebar { background: var(--surface); border-right: 1px solid var(--border); overflow-y: auto; padding: 16px; grid-row: 1 / 3; }
+  .canvas-area { position: relative; overflow: hidden; }
+  .prompt-area { background: var(--surface); border-top: 1px solid var(--border); padding: 12px 16px; max-height: 180px; overflow-y: auto; }
+
+  h1 { font-size: 15px; font-weight: 600; margin-bottom: 4px; color: var(--green); }
+  h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin: 16px 0 8px; }
+  .subtitle { font-size: 11px; color: var(--text-dim); margin-bottom: 16px; }
+
+  .preset-btn {
+    display: block; width: 100%; padding: 8px 12px; margin-bottom: 4px;
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); font-size: 12px; cursor: pointer; text-align: left; transition: all 0.15s;
+  }
+  .preset-btn:hover { border-color: var(--green); background: var(--green-bg); }
+  .preset-btn.active { border-color: var(--green); background: var(--green-bg); color: var(--green); }
+
+  .toggle-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer; font-size: 12px; }
+  .toggle-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .toggle-row input { display: none; }
+  .toggle-row.off { opacity: 0.4; }
+
+  .detail-panel {
+    position: absolute; top: 12px; right: 12px; width: 320px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px; z-index: 10; box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    display: none; max-height: calc(100% - 24px); overflow-y: auto;
+  }
+  .detail-panel.show { display: block; }
+  .detail-close { position: absolute; top: 8px; right: 12px; background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 18px; }
+  .detail-title { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+  .detail-sub { font-size: 11px; color: var(--text-dim); margin-bottom: 12px; font-family: 'SF Mono', 'Consolas', monospace; }
+  .detail-section { margin-bottom: 12px; }
+  .detail-section h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 4px; }
+  .detail-section p, .detail-section li { font-size: 12px; line-height: 1.6; color: var(--text); }
+  .detail-section ul { padding-left: 16px; }
+  .detail-tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; margin: 2px; }
+
+  svg { width: 100%; height: 100%; }
+  .node { cursor: pointer; transition: filter 0.15s; }
+  .node:hover { filter: brightness(1.15); }
+  .node.selected rect { stroke-width: 2.5; }
+  .conn-label { font-size: 9px; fill: var(--text-dim); font-family: -apple-system, sans-serif; }
+  .node-title { font-size: 12px; font-weight: 600; fill: var(--text); font-family: -apple-system, sans-serif; }
+  .node-sub { font-size: 9px; fill: var(--text-dim); font-family: 'SF Mono', 'Consolas', monospace; }
+  .node-icon { font-size: 16px; }
+
+  .prompt-text { font-size: 12px; line-height: 1.6; color: var(--text-dim); white-space: pre-wrap; font-family: 'SF Mono', 'Consolas', monospace; }
+  .copy-btn {
+    float: right; padding: 4px 12px; background: var(--green-bg); border: 1px solid var(--green);
+    border-radius: 4px; color: var(--green); font-size: 11px; cursor: pointer; font-weight: 600;
+  }
+  .copy-btn:hover { background: var(--green); color: var(--bg); }
+
+  .legend { position: absolute; bottom: 12px; left: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; font-size: 10px; z-index: 5; }
+  .legend-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+  .legend-line { width: 24px; height: 2px; }
+  .legend-line.dashed { background: repeating-linear-gradient(90deg, var(--amber) 0, var(--amber) 6px, transparent 6px, transparent 10px); }
+
+  .zoom-controls { position: absolute; top: 12px; left: 12px; display: flex; flex-direction: column; gap: 4px; z-index: 5; }
+  .zoom-btn { width: 28px; height: 28px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+  .zoom-btn:hover { border-color: var(--green); }
+
+  .platform-toggle { display: flex; gap: 4px; margin-bottom: 12px; }
+  .platform-btn { flex: 1; padding: 6px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); font-size: 11px; cursor: pointer; text-align: center; font-weight: 600; }
+  .platform-btn.active { border-color: var(--green); color: var(--green); background: var(--green-bg); }
+</style>
+</head>
+<body>
+<div class="layout">
+  <div class="sidebar">
+    <h1>Soccer Analytics</h1>
+    <div class="subtitle">Architecture Explorer v0.1.0</div>
+
+    <h2>Platform</h2>
+    <div class="platform-toggle">
+      <button class="platform-btn active" onclick="setPlatform('windows')">Windows</button>
+      <button class="platform-btn" onclick="setPlatform('dgx')">DGX Spark</button>
+    </div>
+
+    <h2>View</h2>
+    <button class="preset-btn active" data-preset="full" onclick="setPreset('full')">Full System</button>
+    <button class="preset-btn" data-preset="pipeline" onclick="setPreset('pipeline')">Pipeline Flow</button>
+    <button class="preset-btn" data-preset="data" onclick="setPreset('data')">Data Model</button>
+    <button class="preset-btn" data-preset="infra" onclick="setPreset('infra')">Infrastructure</button>
+
+    <h2>Layers</h2>
+    <div id="layer-toggles"></div>
+
+    <h2>Connections</h2>
+    <div id="conn-toggles"></div>
+
+    <h2>Details</h2>
+    <p style="font-size:11px;color:var(--text-dim)">Click any component in the diagram to view details.</p>
+  </div>
+
+  <div class="canvas-area" id="canvas-area">
+    <div class="zoom-controls">
+      <button class="zoom-btn" onclick="zoom(0.1)">+</button>
+      <button class="zoom-btn" onclick="zoom(-0.1)">&minus;</button>
+      <button class="zoom-btn" onclick="resetZoom()" style="font-size:10px">1:1</button>
+    </div>
+    <svg id="diagram" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="legend">
+      <div class="legend-row"><div class="legend-line" style="background:var(--green)"></div> Data Flow</div>
+      <div class="legend-row"><div class="legend-line dashed"></div> GPU / API Call</div>
+      <div class="legend-row"><div class="legend-line" style="background:var(--blue)"></div> Storage</div>
+      <div class="legend-row"><div class="legend-line" style="background:var(--purple)"></div> HTTP</div>
+    </div>
+    <div class="detail-panel" id="detail-panel">
+      <button class="detail-close" onclick="closeDetail()">&times;</button>
+      <div id="detail-content"></div>
+    </div>
+  </div>
+
+  <div class="prompt-area">
+    <button class="copy-btn" onclick="copyPrompt()">Copy</button>
+    <div class="prompt-text" id="prompt-output"></div>
+  </div>
+</div>
+
+<script>
+const LAYERS = [
+  { id: 'entry', label: 'Entry Point', color: '#22c55e' },
+  { id: 'orchestrator', label: 'Orchestrator', color: '#3b82f6' },
+  { id: 'pipeline', label: 'Pipeline Stages', color: '#06b6d4' },
+  { id: 'vlm', label: 'VLM Service', color: '#f59e0b' },
+  { id: 'storage', label: 'Storage', color: '#a855f7' },
+  { id: 'docs', label: 'Documentation', color: '#6b7280' },
+];
+
+const CONN_TYPES = [
+  { id: 'data', label: 'Data Flow', color: '#22c55e', dash: '' },
+  { id: 'gpu', label: 'GPU / API', color: '#f59e0b', dash: '6,3' },
+  { id: 'store', label: 'Storage', color: '#a855f7', dash: '' },
+  { id: 'http', label: 'HTTP', color: '#a855f7', dash: '4,4' },
+];
+
+const state = {
+  platform: 'windows',
+  preset: 'full',
+  layers: { entry: true, orchestrator: true, pipeline: true, vlm: true, storage: true, docs: true },
+  connTypes: { data: true, gpu: true, store: true, http: true },
+  selected: null,
+  scale: 1,
+  panX: 0, panY: 0,
+};
+
+const NODES = [
+  { id: 'pdf-upload', label: 'PDF Upload', sub: 'REST API', icon: '\u{1F4C4}',
+    x: 420, y: 20, w: 160, h: 50, layer: 'entry', fill: '#1a3a2a', stroke: '#22c55e',
+    detail: {
+      title: 'PDF Upload', sub: 'POST /api/ingest',
+      sections: [
+        { h: 'Description', p: 'Entry point for soccer coaching PDFs. Accepts multipart file uploads via the REST API. Validates file type (PDF only) and size limits.' },
+        { h: 'Configuration', items: ['Max upload size: ${MAX_UPLOAD_SIZE_MB} (default 50 MB)', 'Timeout: ${EXTRACTION_TIMEOUT_SECONDS} (default 300s)', 'Accepted format: PDF only'] },
+        { h: 'Endpoint', p: 'POST /api/ingest with multipart form data' },
+      ],
+      tags: [{ text: 'FastAPI', color: 'var(--green)' }, { text: 'CPU', color: 'var(--blue)' }]
+    }
+  },
+  { id: 'orchestrator', label: 'FastAPI Orchestrator', sub: ':8004 \u2022 python:3.12-slim',  icon: '\u{2699}\u{FE0F}',
+    x: 370, y: 100, w: 260, h: 50, layer: 'orchestrator', fill: '#1a2540', stroke: '#3b82f6',
+    detail: {
+      title: 'FastAPI Orchestrator', sub: 'src/api/main.py \u2022 Port 8004',
+      sections: [
+        { h: 'Description', p: 'Central coordination service running on CPU. Receives PDF uploads, runs the 5-stage pipeline, and exposes REST API for querying stored session plans.' },
+        { h: 'Base Image', p: 'python:3.12-slim (no GPU needed \u2014 VLM inference delegated to Ollama via HTTP)' },
+        { h: 'Key Dependencies', items: ['FastAPI >= 0.115', 'Docling >= 2.70 (PDF decomposition)', 'Pydantic >= 2.10 (schema validation)', 'SQLAlchemy[asyncio] >= 2.0', 'httpx >= 0.27 (Ollama client)'] },
+        { h: 'API Endpoints', items: ['POST /api/ingest \u2014 Upload & process PDF', 'GET /api/sessions \u2014 List session plans', 'GET /api/sessions/{id} \u2014 Get by ID', 'PUT /api/sessions/{id} \u2014 Update', 'GET /health \u2014 Health check'] },
+      ],
+      tags: [{ text: 'CPU Only', color: 'var(--blue)' }, { text: 'Async', color: 'var(--cyan)' }]
+    }
+  },
+  { id: 'stage1', label: '1. Decompose', sub: 'Docling PDF \u2192 Markdown + Images', icon: '\u{1F4D1}',
+    x: 80, y: 200, w: 170, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    detail: {
+      title: 'Stage 1: PDF Decomposition', sub: 'src/pipeline/decompose.py',
+      sections: [
+        { h: 'Description', p: 'Docling DocumentConverter extracts structured markdown text and diagram images from coaching PDFs. Runs OCR for scanned documents.' },
+        { h: 'Technology', items: ['Docling v2.72.0 DocumentConverter', 'PdfPipelineOptions: OCR enabled, 2x image scale', 'Runs synchronously in thread pool (CPU)'] },
+        { h: 'Output', items: ['Markdown text with ## headers', 'Extracted diagram PNGs (diagram_000.png, ...)', 'Page count and table data'] },
+        { h: 'Performance', p: 'Session Plan (2 pages): ~5 sec. Two Versus One (40 pages): ~30 sec.' },
+      ],
+      tags: [{ text: 'Docling', color: 'var(--cyan)' }, { text: 'CPU', color: 'var(--blue)' }, { text: 'OCR', color: 'var(--text-dim)' }]
+    }
+  },
+  { id: 'stage2', label: '2. Describe', sub: 'VLM Diagram Analysis', icon: '\u{1F441}\u{FE0F}',
+    x: 280, y: 200, w: 170, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    detail: {
+      title: 'Stage 2: VLM Diagram Analysis', sub: 'src/pipeline/describe.py',
+      sections: [
+        { h: 'Description', p: 'Each extracted image is sent to Qwen3-VL via Ollama\'s OpenAI-compatible vision API. The VLM classifies images as tactical diagrams vs non-diagrams (photos, logos) and extracts structured information.' },
+        { h: 'VLM Prompt', items: ['System message enforcing JSON-only output', 'is_diagram classification (true/false)', 'Player positions with x,y coordinates', 'Movement arrows and tactical setup'] },
+        { h: 'JSON Extraction', items: ['3-strategy parser: direct \u2192 fence strip \u2192 brace counting', 'Trailing comma fix for malformed JSON', 'Fallback to free-text description'] },
+        { h: 'Performance', p: '~15-20 sec per image on GPU. 4 images: ~1 min. 28 images: ~8 min.' },
+      ],
+      tags: [{ text: 'Qwen3-VL', color: 'var(--amber)' }, { text: 'GPU', color: 'var(--red)' }, { text: 'Vision', color: 'var(--purple)' }]
+    }
+  },
+  { id: 'stage3', label: '3. Extract', sub: 'Schema Extraction', icon: '\u{1F9E9}',
+    x: 480, y: 200, w: 170, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    detail: {
+      title: 'Stage 3: Schema Extraction', sub: 'src/pipeline/extract.py',
+      sections: [
+        { h: 'Description', p: 'Parses Docling markdown into structured DrillBlock models. Uses header grouping to identify drills and their sub-sections.' },
+        { h: 'Header Classification', items: ['Drill headers: Component names (e.g. "Coach-Goalkeeper(s)")', 'Sub-section headers: Setup, Sequence, Coaching Points, Variations, Rules', 'Non-drill headers: AUTHORS, PART ONE, ACKNOWLEDGMENT (filtered)'] },
+        { h: 'Metadata Extraction', items: ['Title from first # or ## header', 'Category/Difficulty from inline "Category: X Difficulty: Y" pattern', 'Author from ## AUTHORS section or "Author: X" line'] },
+        { h: 'Results', p: 'Session Plan: 4 drills. Two Versus One (40 pages): 17 drills with sub-sections grouped correctly.' },
+      ],
+      tags: [{ text: 'Pydantic', color: 'var(--green)' }, { text: 'Regex', color: 'var(--text-dim)' }]
+    }
+  },
+  { id: 'stage4', label: '4. Enrich', sub: 'Tactical Context', icon: '\u{26BD}',
+    x: 680, y: 200, w: 170, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    detail: {
+      title: 'Stage 4: Tactical Enrichment', sub: 'src/pipeline/validate.py',
+      sections: [
+        { h: 'Peters/Schumacher 2v1 Methodology', p: 'Keyword-based detection of tactical context from drill text, VLM descriptions, coaching points, and progressions.' },
+        { h: '5 Pitch Lanes', items: ['Left Wing', 'Left Half-Space', 'Central Corridor', 'Right Half-Space', 'Right Wing'] },
+        { h: '4 Situation Types', items: ['Frontal \u2014 Teammate facing opponent', 'Lateral \u2014 Side-on approach', 'Behind \u2014 Teammate behind opponent', 'Before \u2014 Teammate in front'] },
+        { h: '9 Game Elements', items: ['Counter Attack, Fast Break, Positional Attack', 'Pressing, Counter Pressing', 'Organized Defense, Build-Up Play', 'Transition to Attack, Transition to Defense'] },
+        { h: 'Also Detects', items: ['Numerical advantage (2v1, 3v2, 4v3, etc.)', 'Methodology references (Peters/Schumacher, Rondo, Positional Play)'] },
+      ],
+      tags: [{ text: '2v1', color: 'var(--green)' }, { text: '5 Lanes', color: 'var(--cyan)' }, { text: '9 Elements', color: 'var(--amber)' }]
+    }
+  },
+  { id: 'stage5', label: '5. Store', sub: 'PostgreSQL Persistence', icon: '\u{1F4BE}',
+    x: 680, y: 300, w: 170, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    detail: {
+      title: 'Stage 5: PostgreSQL Storage', sub: 'src/pipeline/store.py',
+      sections: [
+        { h: 'Description', p: 'Stores session plans, drill blocks, and tactical contexts in PostgreSQL. Full JSON preserved in JSONB columns. Upsert with ON CONFLICT for idempotent re-ingestion.' },
+        { h: 'Tables', items: ['session_plans \u2014 title, category, difficulty, author, raw_json', 'drill_blocks \u2014 name, setup, sequence[], coaching_points[], image_ref', 'tactical_contexts \u2014 methodology, game_element, lanes[], situation_type'] },
+        { h: 'Indexes', items: ['session_plans(title), session_plans(category)', 'drill_blocks(session_plan_id)', 'tactical_contexts(drill_block_id), tactical_contexts(methodology)'] },
+      ],
+      tags: [{ text: 'asyncpg', color: 'var(--purple)' }, { text: 'JSONB', color: 'var(--text-dim)' }]
+    }
+  },
+  { id: 'ollama', label: 'Ollama VLM', sub: ':11434 \u2022 GPU', icon: '\u{1F9E0}',
+    x: 280, y: 320, w: 170, h: 50, layer: 'vlm', fill: '#2a2010', stroke: '#f59e0b',
+    detail: {
+      title: 'Ollama VLM Service', sub: 'Port 11434 \u2022 GPU Container',
+      sections: [
+        { h: 'Description', p: 'Runs Qwen3-VL vision-language model with full GPU offloading. Provides OpenAI-compatible /v1/chat/completions endpoint with vision support.' },
+        { h: 'Model (Windows)', items: ['qwen3-vl:8b \u2014 Q4_K_M quantization', 'Download: 6.1 GB', 'VRAM: 5.4 GiB model weights + 576 MiB KV cache', '37/37 layers offloaded to CUDA'] },
+        { h: 'Model (DGX)', items: ['qwen3-vl:32b \u2014 larger model for higher accuracy', 'Leverages Blackwell GPU (128 GB)'] },
+        { h: 'API', p: 'POST /v1/chat/completions with base64-encoded images in the messages array. System + user message pattern.' },
+      ],
+      tags: [{ text: 'Qwen3-VL', color: 'var(--amber)' }, { text: 'CUDA', color: 'var(--red)' }, { text: '37/37 layers', color: 'var(--green)' }]
+    }
+  },
+  { id: 'postgres', label: 'PostgreSQL + pgvector', sub: ':5434 \u2022 pgvector:pg16', icon: '\u{1F5C3}\u{FE0F}',
+    x: 580, y: 380, w: 200, h: 50, layer: 'storage', fill: '#1f1a30', stroke: '#a855f7',
+    detail: {
+      title: 'PostgreSQL + pgvector', sub: 'Port 5434 \u2022 pgvector/pgvector:pg16',
+      sections: [
+        { h: 'Description', p: 'Persistent storage for all extracted data. Uses pgvector extension for future vector similarity search. Schema initialized via init-db.sql on first run.' },
+        { h: 'Database Schema', items: ['session_plans \u2014 UUID PK, JSONB raw_json, timestamps', 'drill_blocks \u2014 FK to session_plans, TEXT[] arrays for lists', 'tactical_contexts \u2014 FK to drill_blocks, methodology classification'] },
+        { h: 'Extensions', items: ['vector \u2014 pgvector for embedding storage (Phase 3)', 'uuid-ossp \u2014 UUID generation'] },
+        { h: 'Connection', p: 'postgresql+asyncpg://soccer_analytics:***@postgres:5432/soccer_analytics' },
+      ],
+      tags: [{ text: 'pgvector', color: 'var(--purple)' }, { text: 'JSONB', color: 'var(--text-dim)' }, { text: 'asyncpg', color: 'var(--cyan)' }]
+    }
+  },
+  { id: 'swagger', label: 'Swagger UI', sub: ':8084', icon: '\u{1F4D6}',
+    x: 80, y: 380, w: 150, h: 50, layer: 'docs', fill: '#1a1d27', stroke: '#6b7280',
+    detail: {
+      title: 'Swagger UI', sub: 'Port 8084 \u2022 swaggerapi/swagger-ui',
+      sections: [
+        { h: 'Description', p: 'Auto-generated API documentation from FastAPI\'s OpenAPI schema. Provides interactive endpoint testing.' },
+        { h: 'Access', p: 'http://localhost:8084 or http://localhost:8004/docs (built-in FastAPI docs)' },
+      ],
+      tags: [{ text: 'OpenAPI', color: 'var(--text-dim)' }]
+    }
+  },
+];
+
+const CONNECTIONS = [
+  { from: 'pdf-upload', to: 'orchestrator', type: 'data', label: 'PDF file' },
+  { from: 'orchestrator', to: 'stage1', type: 'data', label: 'Pipeline start' },
+  { from: 'stage1', to: 'stage2', type: 'data', label: 'Markdown + images' },
+  { from: 'stage2', to: 'stage3', type: 'data', label: 'VLM descriptions' },
+  { from: 'stage3', to: 'stage4', type: 'data', label: 'DrillBlocks' },
+  { from: 'stage4', to: 'stage5', type: 'data', label: 'SessionPlan' },
+  { from: 'stage2', to: 'ollama', type: 'gpu', label: 'Base64 images' },
+  { from: 'ollama', to: 'stage2', type: 'gpu', label: 'JSON analysis' },
+  { from: 'stage5', to: 'postgres', type: 'store', label: 'INSERT/UPSERT' },
+  { from: 'orchestrator', to: 'swagger', type: 'http', label: 'OpenAPI schema' },
+  { from: 'orchestrator', to: 'postgres', type: 'store', label: 'Query' },
+];
+
+const PRESETS = {
+  full: { layers: { entry: true, orchestrator: true, pipeline: true, vlm: true, storage: true, docs: true } },
+  pipeline: { layers: { entry: false, orchestrator: false, pipeline: true, vlm: true, storage: false, docs: false } },
+  data: { layers: { entry: false, orchestrator: false, pipeline: true, vlm: false, storage: true, docs: false } },
+  infra: { layers: { entry: true, orchestrator: true, pipeline: false, vlm: true, storage: true, docs: true } },
+};
+
+function init() {
+  renderLayerToggles();
+  renderConnToggles();
+  renderDiagram();
+  updatePrompt();
+}
+
+function renderLayerToggles() {
+  const el = document.getElementById('layer-toggles');
+  el.innerHTML = LAYERS.map(l => `
+    <label class="toggle-row ${state.layers[l.id] ? '' : 'off'}" data-layer="${l.id}">
+      <input type="checkbox" ${state.layers[l.id] ? 'checked' : ''} onchange="toggleLayer('${l.id}')">
+      <span class="toggle-dot" style="background:${l.color}"></span>
+      ${l.label}
+    </label>
+  `).join('');
+}
+
+function renderConnToggles() {
+  const el = document.getElementById('conn-toggles');
+  el.innerHTML = CONN_TYPES.map(c => `
+    <label class="toggle-row ${state.connTypes[c.id] ? '' : 'off'}" data-conn="${c.id}">
+      <input type="checkbox" ${state.connTypes[c.id] ? 'checked' : ''} onchange="toggleConn('${c.id}')">
+      <span class="toggle-dot" style="background:${c.color}"></span>
+      ${c.label}
+    </label>
+  `).join('');
+}
+
+function toggleLayer(id) {
+  state.layers[id] = !state.layers[id];
+  renderLayerToggles();
+  renderDiagram();
+  updatePrompt();
+}
+
+function toggleConn(id) {
+  state.connTypes[id] = !state.connTypes[id];
+  renderConnToggles();
+  renderDiagram();
+  updatePrompt();
+}
+
+function setPreset(id) {
+  state.preset = id;
+  Object.assign(state.layers, PRESETS[id].layers);
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.toggle('active', b.dataset.preset === id));
+  renderLayerToggles();
+  renderDiagram();
+  updatePrompt();
+}
+
+function setPlatform(p) {
+  state.platform = p;
+  document.querySelectorAll('.platform-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase().includes(p)));
+  renderDiagram();
+  updatePrompt();
+}
+
+function getNode(id) { return NODES.find(n => n.id === id); }
+
+function renderDiagram() {
+  const svg = document.getElementById('diagram');
+  const visibleNodes = NODES.filter(n => state.layers[n.layer]);
+  const visibleIds = new Set(visibleNodes.map(n => n.id));
+  const visibleConns = CONNECTIONS.filter(c =>
+    state.connTypes[c.type] && visibleIds.has(c.from) && visibleIds.has(c.to)
+  );
+
+  let html = `<defs>`;
+  CONN_TYPES.forEach(ct => {
+    html += `<marker id="arrow-${ct.id}" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="${ct.color}" opacity="0.8"/>
+    </marker>`;
+  });
+  html += `</defs>`;
+  html += `<g transform="translate(${state.panX},${state.panY}) scale(${state.scale})">`;
+
+  // Connections
+  visibleConns.forEach(c => {
+    const f = getNode(c.from), t = getNode(c.to);
+    const ct = CONN_TYPES.find(x => x.id === c.type);
+    const fx = f.x + f.w/2, fy = f.y + f.h/2;
+    const tx = t.x + t.w/2, ty = t.y + t.h/2;
+    const mx = (fx + tx) / 2, my = (fy + ty) / 2;
+    const dx = tx - fx, dy = ty - fy;
+    const cx = mx - dy * 0.15, cy = my + dx * 0.15;
+    const dashAttr = ct.dash ? `stroke-dasharray="${ct.dash}"` : '';
+    html += `<path d="M${fx},${fy} Q${cx},${cy} ${tx},${ty}" fill="none" stroke="${ct.color}" stroke-width="1.5" opacity="0.5" ${dashAttr} marker-end="url(#arrow-${ct.id})"/>`;
+    if (c.label) {
+      html += `<text class="conn-label" x="${mx}" y="${my - 6}" text-anchor="middle">${c.label}</text>`;
+    }
+  });
+
+  // Nodes
+  visibleNodes.forEach(n => {
+    const sel = state.selected === n.id;
+    const platSub = n.id === 'ollama'
+      ? (state.platform === 'dgx' ? ':11434 \u2022 GPU \u2022 qwen3-vl:32b' : ':11434 \u2022 GPU \u2022 qwen3-vl:8b')
+      : n.sub;
+    html += `<g class="node ${sel ? 'selected' : ''}" onclick="selectNode('${n.id}')">
+      <rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="8"
+        fill="${n.fill}" stroke="${n.stroke}" stroke-width="${sel ? 2.5 : 1.2}"/>
+      <text class="node-icon" x="${n.x + 12}" y="${n.y + 30}">${n.icon}</text>
+      <text class="node-title" x="${n.x + 32}" y="${n.y + 22}">${n.label}</text>
+      <text class="node-sub" x="${n.x + 32}" y="${n.y + 36}">${platSub}</text>
+    </g>`;
+  });
+
+  html += `</g>`;
+  svg.innerHTML = html;
+}
+
+function selectNode(id) {
+  state.selected = id;
+  const node = getNode(id);
+  if (!node || !node.detail) return;
+  const d = node.detail;
+  let html = `<div class="detail-title">${d.title}</div>`;
+  html += `<div class="detail-sub">${d.sub}</div>`;
+  if (d.tags) {
+    html += `<div style="margin-bottom:12px">`;
+    d.tags.forEach(t => {
+      html += `<span class="detail-tag" style="background:${t.color}20;color:${t.color};border:1px solid ${t.color}40">${t.text}</span>`;
+    });
+    html += `</div>`;
+  }
+  d.sections.forEach(s => {
+    html += `<div class="detail-section"><h3>${s.h}</h3>`;
+    if (s.p) html += `<p>${s.p}</p>`;
+    if (s.items) {
+      html += `<ul>${s.items.map(i => `<li>${i}</li>`).join('')}</ul>`;
+    }
+    html += `</div>`;
+  });
+  document.getElementById('detail-content').innerHTML = html;
+  document.getElementById('detail-panel').classList.add('show');
+  renderDiagram();
+}
+
+function closeDetail() {
+  state.selected = null;
+  document.getElementById('detail-panel').classList.remove('show');
+  renderDiagram();
+}
+
+function zoom(delta) {
+  state.scale = Math.max(0.4, Math.min(2, state.scale + delta));
+  renderDiagram();
+}
+function resetZoom() {
+  state.scale = 1; state.panX = 0; state.panY = 0;
+  renderDiagram();
+}
+
+// Pan with mouse drag
+let dragging = false, dragStart = { x: 0, y: 0 };
+document.getElementById('canvas-area').addEventListener('mousedown', e => {
+  if (e.target.closest('.node') || e.target.closest('.detail-panel') || e.target.closest('.zoom-btn') || e.target.closest('.legend')) return;
+  dragging = true;
+  dragStart = { x: e.clientX - state.panX, y: e.clientY - state.panY };
+});
+document.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  state.panX = e.clientX - dragStart.x;
+  state.panY = e.clientY - dragStart.y;
+  renderDiagram();
+});
+document.addEventListener('mouseup', () => { dragging = false; });
+document.getElementById('canvas-area').addEventListener('wheel', e => {
+  e.preventDefault();
+  zoom(e.deltaY > 0 ? -0.05 : 0.05);
+}, { passive: false });
+
+function updatePrompt() {
+  const visibleLayers = LAYERS.filter(l => state.layers[l.id]).map(l => l.label);
+  const platform = state.platform === 'dgx' ? 'DGX Spark (Blackwell, qwen3-vl:32b)' : 'Windows (RTX 5070 Ti, qwen3-vl:8b)';
+  const parts = [`Soccer Analytics Service architecture on ${platform}.`];
+
+  if (visibleLayers.length < LAYERS.length) {
+    parts.push(`Showing: ${visibleLayers.join(', ')}.`);
+  }
+
+  if (state.selected) {
+    const node = getNode(state.selected);
+    if (node) parts.push(`Selected component: ${node.detail.title} (${node.detail.sub}).`);
+  }
+
+  document.getElementById('prompt-output').textContent = parts.join('\n');
+}
+
+function copyPrompt() {
+  const text = document.getElementById('prompt-output').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.querySelector('.copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+  });
+}
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,58 @@
+ARG BASE_IMAGE=python:3.12-slim
+FROM ${BASE_IMAGE}
+ARG PLATFORM=windows
+
+WORKDIR /app
+
+# System dependencies for Docling PDF processing and OpenCV
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    libpq-dev \
+    poppler-utils \
+    tesseract-ocr \
+    libgl1 \
+    libglib2.0-0t64 \
+    && rm -rf /var/lib/apt/lists/*
+
+# DGX: Back up NVIDIA torch (PyPI ARM64 wheels are CPU-only)
+RUN if [ "${PLATFORM}" = "dgx" ]; then \
+        PYDIR=$(python -c "import site; print(site.getsitepackages()[0])") && \
+        mkdir -p /tmp/nv_backup && \
+        cp -a ${PYDIR}/torch /tmp/nv_backup/torch && \
+        cp -a ${PYDIR}/torchvision /tmp/nv_backup/torchvision 2>/dev/null || true; \
+    fi
+
+# Install Python dependencies
+COPY requirements.txt requirements.windows.txt requirements.dgx.txt ./
+RUN if [ "${PLATFORM}" = "windows" ]; then \
+        pip install --no-cache-dir -r requirements.windows.txt; \
+    elif [ "${PLATFORM}" = "dgx" ]; then \
+        pip install --no-cache-dir -r requirements.dgx.txt; \
+    else \
+        pip install --no-cache-dir -r requirements.txt; \
+    fi
+
+# DGX: Restore NVIDIA torch (pip may have replaced it with CPU-only PyPI version)
+RUN if [ "${PLATFORM}" = "dgx" ]; then \
+        PYDIR=$(python -c "import site; print(site.getsitepackages()[0])") && \
+        rm -rf ${PYDIR}/torch ${PYDIR}/torchvision && \
+        cp -a /tmp/nv_backup/torch ${PYDIR}/torch && \
+        cp -a /tmp/nv_backup/torchvision ${PYDIR}/torchvision 2>/dev/null || true && \
+        rm -rf /tmp/nv_backup; \
+    fi
+
+# Copy application code
+COPY src/ ./src/
+
+# Create upload directory
+RUN mkdir -p /app/uploads
+
+# Expose FastAPI port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run with uvicorn
+CMD ["python", "-m", "uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,0 +1,2 @@
+# DGX Spark (Blackwell, ARM64) - torch pre-installed in NGC base image, backup/restore protects it
+-r requirements.txt

@@ -1,0 +1,45 @@
+# Soccer Analytics Service - Base Infrastructure
+# Use with a platform-specific override:
+#   docker compose -f docker-compose.yml -f docker-compose.windows.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.dgx.yml up -d
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    ports:
+      - "${DB_PORT:-5434}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-soccer_analytics}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_soccer_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-soccer_analytics}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-soccer_analytics}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - soccer-analytics
+
+  swagger-ui:
+    image: swaggerapi/swagger-ui
+    restart: unless-stopped
+    ports:
+      - "${DOCS_PORT:-8084}:8080"
+    environment:
+      URL: http://localhost:${API_PORT:-8004}/openapi.json
+    networks:
+      - soccer-analytics
+
+volumes:
+  postgres_data:
+  ollama_data:
+  model_cache:
+  upload_data:
+
+networks:
+  soccer-analytics:
+    driver: bridge

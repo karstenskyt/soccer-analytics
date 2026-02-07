@@ -1,0 +1,2 @@
+# Windows (RTX 5070 Ti, CUDA 12.8) - uses python:3.12-slim base image
+-r requirements.txt

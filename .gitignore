@@ -1,0 +1,48 @@
+# Environment
+.env
+!.env.example
+!.env.windows.example
+!.env.dgx.example
+
+# Documents (sample PDFs, not tracked)
+documents/
+
+# Internal planning
+PLAN.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+
+# Uploads and temp
+uploads/
+*.tmp
+*.log
+*.jsonl
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Claude Code (local settings)
+.claude/
+
+# OMC state
+.omc/

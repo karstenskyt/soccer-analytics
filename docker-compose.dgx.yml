@@ -1,0 +1,73 @@
+# Soccer Analytics Service - DGX Spark GPU Services (Blackwell, ARM64)
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dgx.yml up -d
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 5
+    networks:
+      - soccer-analytics
+
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["ollama", "pull", "${VLM_MODEL:-qwen3-vl:32b}"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    networks:
+      - soccer-analytics
+
+  orchestrator:
+    # 25.11 container required for Blackwell GPU (sm_121) support
+    build:
+      context: .
+      dockerfile: Dockerfile.template
+      args:
+        BASE_IMAGE: nvcr.io/nvidia/pytorch:25.11-py3
+        PLATFORM: dgx
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8004}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-soccer_analytics}:${POSTGRES_PASSWORD:-changeme_soccer_2026}@postgres:5432/${POSTGRES_DB:-soccer_analytics}
+      VLM_MODEL: ${VLM_MODEL:-qwen3-vl:32b}
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-50}
+      EXTRACTION_TIMEOUT_SECONDS: ${EXTRACTION_TIMEOUT_SECONDS:-600}
+    volumes:
+      - upload_data:/app/uploads
+      - model_cache:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - soccer-analytics
