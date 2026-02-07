@@ -6,11 +6,8 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # Database
-    database_url: str = (
-        "postgresql+asyncpg://soccer_analytics:changeme_soccer_2026"
-        "@postgres:5432/soccer_analytics"
-    )
+    # Database (no default — must be set via DATABASE_URL env var or .env)
+    database_url: str
 
     # Ollama VLM
     ollama_url: str = "http://ollama:11434"

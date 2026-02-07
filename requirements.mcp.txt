@@ -1,0 +1,3 @@
+# Host-side MCP server dependencies (lightweight, no Docker needed)
+mcp>=1.0.0
+httpx>=0.27,<1.0

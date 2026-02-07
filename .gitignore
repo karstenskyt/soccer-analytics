@@ -27,6 +27,12 @@ uploads/
 *.log
 *.jsonl
 
+# Generated diagrams
+diagram_*.png
+
+# MCP config (contains local paths)
+.mcp.json
+
 # IDE
 .vscode/
 .idea/

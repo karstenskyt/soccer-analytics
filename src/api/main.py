@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .deps import engine
-from .routes import ingest, sessions
+from .routes import drills, ingest, sessions
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,6 +54,7 @@ app.add_middleware(
 
 app.include_router(ingest.router)
 app.include_router(sessions.router)
+app.include_router(drills.router)
 
 
 @app.get("/health")

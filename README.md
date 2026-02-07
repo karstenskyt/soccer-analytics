@@ -79,6 +79,10 @@ All ports are configurable via `.env`. See [Interactive Architecture Diagram](ar
 | `GET` | `/api/sessions` | List stored session plans |
 | `GET` | `/api/sessions/{id}` | Get a session plan by ID |
 | `PUT` | `/api/sessions/{id}` | Update a session plan |
+| `GET` | `/api/sessions/{id}/drills` | List drills for a session plan |
+| `GET` | `/api/sessions/{id}/drills/{idx}` | Get a specific drill by index |
+| `GET` | `/api/sessions/{id}/drills/{idx}/diagram` | Render pitch diagram (PNG) |
+| `POST` | `/api/render` | Render diagram from ad-hoc DrillBlock JSON |
 | `GET` | `/health` | Health check |
 | `GET` | `/docs` | Auto-generated OpenAPI docs |
 
@@ -109,6 +113,49 @@ Response:
   }
 }
 ```
+
+## MCP Server (Claude Code Integration)
+
+An MCP server lets Claude Code query and analyze stored session plans directly.
+
+### Setup
+
+```bash
+# Create a host-side virtual environment
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+# source .venv/bin/activate   # Linux/macOS
+
+# Install MCP dependencies (lightweight, no Docker needed)
+pip install -r requirements.mcp.txt
+```
+
+The `.mcp.json` file in the project root registers the server with Claude Code automatically. Make sure Docker services are running so the MCP server can reach the API at `http://localhost:8004`.
+
+### MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `parse_session_plan` | List all session plans or get a specific plan by ID |
+| `analyze_tactical_drill` | Get a drill with tactical context, optionally include diagram URL |
+| `render_drill_diagram` | Render a pitch diagram and return base64-encoded image |
+
+### Usage in Claude Code
+
+Once configured, you can ask Claude Code:
+- "Show me the stored session plans"
+- "Analyze drill 0 from session plan {id}"
+- "Render the pitch diagram for drill 1"
+
+### Pitch Diagrams
+
+Pitch diagrams are rendered using [mplsoccer](https://mplsoccer.readthedocs.io/) with opta-style coordinates (0–100). Player markers are color-coded by role:
+
+| Role | Color |
+|------|-------|
+| Goalkeeper | Amber (`#F9A825`) |
+| Attacker | Blue (`#1565C0`) |
+| Defender | Red (`#C62828`) |
 
 ## Processing Pipeline
 
@@ -217,6 +264,8 @@ soccer-analytics/
 ├── requirements.txt                # Common Python dependencies
 ├── requirements.windows.txt        # Windows-specific deps
 ├── requirements.dgx.txt            # DGX-specific deps
+├── requirements.mcp.txt            # Host-side MCP server deps
+├── .mcp.json                       # MCP server registration
 ├── .env.windows.example            # Windows env template
 ├── .env.dgx.example                # DGX env template
 ├── architecture.html               # Interactive architecture diagram
@@ -229,19 +278,27 @@ soccer-analytics/
 │   │   ├── deps.py                 # DB session + Ollama client
 │   │   └── routes/
 │   │       ├── ingest.py           # POST /api/ingest
-│   │       └── sessions.py         # GET/PUT /api/sessions
+│   │       ├── sessions.py         # GET/PUT /api/sessions
+│   │       └── drills.py           # Drill + diagram endpoints
+│   ├── mcp/
+│   │   ├── __main__.py             # Entry point: python -m src.mcp
+│   │   └── server.py               # MCP stdio server (3 tools)
 │   ├── pipeline/
 │   │   ├── decompose.py            # Stage 1: Docling PDF decomposition
 │   │   ├── describe.py             # Stage 2: VLM diagram analysis
 │   │   ├── extract.py              # Stage 3: Schema extraction
 │   │   ├── validate.py             # Stage 4: Tactical enrichment
 │   │   └── store.py                # Stage 5: PostgreSQL storage
+│   ├── rendering/
+│   │   └── pitch.py                # mplsoccer pitch diagram renderer
 │   └── schemas/
 │       ├── session_plan.py         # SessionPlan, DrillBlock models
 │       └── tactical.py             # 2v1 methodology enums
 ├── tests/
 │   ├── test_schemas.py
 │   ├── test_pipeline.py
+│   ├── test_rendering.py           # Pitch rendering unit tests
+│   ├── test_mcp.py                 # MCP tool unit tests (mocked)
 │   └── test_api.py
 └── documents/                      # Sample PDFs for testing
 ```
@@ -273,7 +330,7 @@ docker compose -f docker-compose.yml -f docker-compose.windows.yml down -v
 
 - **Phase 1** (Complete): Foundation MVP - PDF ingestion, VLM analysis, PostgreSQL storage
 - **Phase 1.5** (Complete): Extraction quality - drill grouping, metadata parsing, VLM classification
-- **Phase 2** (Planned): MCP server interface, mplsoccer diagram rendering
+- **Phase 2** (Complete): MCP server interface, mplsoccer pitch diagram rendering
 - **Phase 3** (Planned): DGX deployment, ColPali visual retrieval, session plan regeneration
 
 ## License

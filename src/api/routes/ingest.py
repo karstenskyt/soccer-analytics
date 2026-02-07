@@ -53,7 +53,8 @@ async def ingest_pdf(
     job_id = uuid4()
     upload_dir = Path(settings.upload_dir) / str(job_id)
     upload_dir.mkdir(parents=True, exist_ok=True)
-    pdf_path = upload_dir / file.filename
+    safe_filename = Path(file.filename).name  # strip directory components
+    pdf_path = upload_dir / safe_filename
 
     try:
         with open(pdf_path, "wb") as f:
@@ -76,7 +77,7 @@ async def ingest_pdf(
         session_plan = await extract_session_plan(
             document=document,
             diagram_descriptions=diagram_descriptions,
-            source_filename=file.filename,
+            source_filename=safe_filename,
         )
 
         # Stage 4: Validate and enrich
@@ -98,8 +99,8 @@ async def ingest_pdf(
             f"Pipeline failed for {file.filename}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail=f"Processing failed: {str(e)}"
+            status_code=500, detail="Processing failed. Check server logs for details."
         )
     finally:
-        if pdf_path.exists():
-            pdf_path.unlink()
+        if upload_dir.exists():
+            shutil.rmtree(upload_dir, ignore_errors=True)
