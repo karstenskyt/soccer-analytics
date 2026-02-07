@@ -1,7 +1,7 @@
 """Tests for MCP server tool logic with mocked httpx."""
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -13,12 +13,11 @@ from src.mcp.server import (
 
 
 def _mock_response(status_code: int = 200, json_data: dict | None = None, content: bytes = b""):
-    """Create a mock httpx.Response."""
-    mock = AsyncMock()
+    """Create a mock httpx.Response (sync methods, matching real httpx)."""
+    mock = MagicMock()
     mock.status_code = status_code
     mock.json.return_value = json_data or {}
     mock.content = content
-    mock.raise_for_status = AsyncMock()
     if status_code >= 400:
         mock.raise_for_status.side_effect = Exception(f"HTTP {status_code}")
     return mock
