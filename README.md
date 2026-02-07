@@ -275,3 +275,7 @@ docker compose -f docker-compose.yml -f docker-compose.windows.yml down -v
 - **Phase 1.5** (Complete): Extraction quality - drill grouping, metadata parsing, VLM classification
 - **Phase 2** (Planned): MCP server interface, mplsoccer diagram rendering
 - **Phase 3** (Planned): DGX deployment, ColPali visual retrieval, session plan regeneration
+
+## License
+
+[MIT](LICENSE)
