@@ -7,6 +7,7 @@ import pytest
 
 from src.mcp.server import (
     analyze_tactical_drill,
+    export_session_pdf,
     parse_session_plan,
     render_drill_diagram,
     search_drills,
@@ -171,3 +172,43 @@ async def test_search_drills_service_unavailable():
     parsed = json.loads(result)
     assert "error" in parsed
     assert "unavailable" in parsed["error"]
+
+
+@pytest.mark.asyncio
+async def test_export_session_pdf_returns_base64():
+    """export_session_pdf should return base64-encoded PDF data."""
+    fake_pdf = b"%PDF-1.4 fake content"
+
+    with patch("src.mcp.server._api_get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = _mock_response(content=fake_pdf)
+        result = await export_session_pdf(plan_id="abc-123")
+
+    parsed = json.loads(result)
+    assert parsed["media_type"] == "application/pdf"
+    assert "data" in parsed
+    assert parsed["size_bytes"] == len(fake_pdf)
+    mock_get.assert_called_once_with("/api/sessions/abc-123/export?format=pdf")
+
+
+@pytest.mark.asyncio
+async def test_export_session_pdf_not_found():
+    """export_session_pdf should return error for unknown plan."""
+    with patch("src.mcp.server._api_get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = _mock_response(status_code=404)
+        result = await export_session_pdf(plan_id="nonexistent")
+
+    parsed = json.loads(result)
+    assert "error" in parsed
+    assert "not found" in parsed["error"]
+
+
+@pytest.mark.asyncio
+async def test_export_session_pdf_calls_correct_endpoint():
+    """export_session_pdf should call the export endpoint with format=pdf."""
+    fake_pdf = b"%PDF-1.7 test"
+
+    with patch("src.mcp.server._api_get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = _mock_response(content=fake_pdf)
+        await export_session_pdf(plan_id="plan-uuid-456")
+
+    mock_get.assert_called_once_with("/api/sessions/plan-uuid-456/export?format=pdf")

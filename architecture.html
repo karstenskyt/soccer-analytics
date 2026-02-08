@@ -154,7 +154,7 @@
 <div class="layout">
   <div class="sidebar">
     <h1>Soccer Analytics</h1>
-    <div class="subtitle">Architecture Explorer v0.2.0</div>
+    <div class="subtitle">Architecture Explorer v0.3.0</div>
 
     <h2>Platform</h2>
     <div class="platform-toggle">
@@ -166,6 +166,7 @@
     <button class="preset-btn active" data-preset="full" onclick="setPreset('full')">Full System</button>
     <button class="preset-btn" data-preset="pipeline" onclick="setPreset('pipeline')">Pipeline Flow</button>
     <button class="preset-btn" data-preset="search" onclick="setPreset('search')">Search Flow</button>
+    <button class="preset-btn" data-preset="export" onclick="setPreset('export')">Export Flow</button>
     <button class="preset-btn" data-preset="data" onclick="setPreset('data')">Data Model</button>
     <button class="preset-btn" data-preset="infra" onclick="setPreset('infra')">Infrastructure</button>
     <button class="preset-btn" data-preset="mcp" onclick="setPreset('mcp')">MCP Tools</button>
@@ -228,6 +229,7 @@ const LAYERS = [
   { id: 'vlm', label: 'VLM Service', color: '#f59e0b' },
   { id: 'retrieval', label: 'Visual Retrieval', color: '#ef4444' },
   { id: 'storage', label: 'Storage', color: '#a855f7' },
+  { id: 'rendering', label: 'Rendering', color: '#3b82f6' },
   { id: 'mcp', label: 'MCP Tools', color: '#22c55e' },
   { id: 'docs', label: 'Documentation', color: '#6b7280' },
 ];
@@ -242,7 +244,7 @@ const CONN_TYPES = [
 const state = {
   platform: 'windows',
   preset: 'full',
-  layers: { entry: true, orchestrator: true, pipeline: true, vlm: true, retrieval: true, storage: true, mcp: true, docs: true },
+  layers: { entry: true, orchestrator: true, pipeline: true, vlm: true, retrieval: true, storage: true, rendering: true, mcp: true, docs: true },
   connTypes: { data: true, gpu: true, store: true, http: true },
   selected: null,
   scale: 1,
@@ -278,17 +280,30 @@ const NODES = [
       tags: [{ text: 'Text Search', color: 'var(--green)' }, { text: 'Semantic', color: 'var(--cyan)' }]
     }
   },
+  { id: 'export-query', label: 'PDF Export', sub: 'GET /api/sessions/{id}/export', icon: '\u{1F4E4}',
+    x: 680, y: 20, w: 210, h: 50, layer: 'entry', fill: '#1a3a2a', stroke: '#22c55e',
+    detail: {
+      title: 'PDF Export', sub: 'GET /api/sessions/{id}/export',
+      sections: [
+        { h: 'Description', p: 'Export a stored session plan as a professional coaching PDF document. Generates a multi-page PDF with cover page, table of contents, and one page per drill with embedded pitch diagrams.' },
+        { h: 'Flow', items: ['Load SessionPlan from PostgreSQL', 'Pydantic model_validate the raw JSON', 'generate_session_pdf() builds reportlab PDF', 'Embeds mplsoccer pitch diagrams as PNG', 'Returns PDF bytes with Content-Disposition header'] },
+        { h: 'Parameters', items: ['plan_id (required): UUID of the session plan', 'format (optional): "pdf" (default)'] },
+        { h: 'PDF Structure', items: ['Cover page: title, author, category, difficulty, date', 'Table of contents with drill names', 'One page per drill with pitch diagram, setup table, numbered sequence', 'Tactical context box with methodology details'] },
+      ],
+      tags: [{ text: 'reportlab', color: 'var(--blue)' }, { text: 'PDF', color: 'var(--green)' }]
+    }
+  },
 
   // Orchestrator
-  { id: 'orchestrator', label: 'FastAPI Orchestrator', sub: ':8004 \u2022 python:3.12-slim',  icon: '\u{2699}\u{FE0F}',
+  { id: 'orchestrator', label: 'FastAPI Orchestrator', sub: ':8004 \u2022 python:3.12-slim', icon: '\u{2699}\u{FE0F}',
     x: 320, y: 100, w: 270, h: 56, layer: 'orchestrator', fill: '#1a2540', stroke: '#3b82f6',
     detail: {
       title: 'FastAPI Orchestrator', sub: 'src/api/main.py \u2022 Port 8004',
       sections: [
-        { h: 'Description', p: 'Central coordination service running on CPU. Receives PDF uploads, runs the 6-stage pipeline (including ColPali visual indexing), and exposes REST API for querying stored session plans and semantic search.' },
+        { h: 'Description', p: 'Central coordination service running on CPU. Receives PDF uploads, runs the 6-stage pipeline (including ColPali visual indexing), and exposes REST API for querying stored session plans, semantic search, validated editing, and PDF export.' },
         { h: 'Base Image', p: 'python:3.12-slim (no GPU needed \u2014 VLM inference delegated to Ollama via HTTP)' },
-        { h: 'Key Dependencies', items: ['FastAPI >= 0.115', 'Docling >= 2.70 (PDF decomposition)', 'Pydantic >= 2.10 (schema validation)', 'SQLAlchemy[asyncio] >= 2.0', 'httpx >= 0.27 (Ollama + ColPali client)'] },
-        { h: 'API Endpoints', items: ['POST /api/ingest \u2014 Upload & process PDF (6-stage pipeline)', 'GET /api/search?q=...&k=5 \u2014 Semantic visual search', 'GET /api/sessions \u2014 List session plans', 'GET /api/sessions/{id} \u2014 Get by ID', 'PUT /api/sessions/{id} \u2014 Update', 'GET /health \u2014 Health check'] },
+        { h: 'Key Dependencies', items: ['FastAPI >= 0.115', 'Docling >= 2.70 (PDF decomposition)', 'Pydantic >= 2.10 (schema validation)', 'SQLAlchemy[asyncio] >= 2.0', 'httpx >= 0.27 (Ollama + ColPali client)', 'reportlab >= 4.1 (PDF export)'] },
+        { h: 'API Endpoints', items: ['POST /api/ingest \u2014 Upload & process PDF (6-stage pipeline)', 'GET /api/search?q=...&k=5 \u2014 Semantic visual search', 'GET /api/sessions \u2014 List session plans', 'GET /api/sessions/{id} \u2014 Get by ID', 'PUT /api/sessions/{id} \u2014 Validated update with tactical re-enrichment', 'GET /api/sessions/{id}/export \u2014 Export as coaching PDF', 'GET /api/sessions/{id}/drills \u2014 List drills', 'GET /api/sessions/{id}/drills/{idx}/diagram \u2014 Pitch diagram PNG/PDF', 'POST /api/render \u2014 Ad-hoc diagram rendering', 'GET /health \u2014 Health check'] },
       ],
       tags: [{ text: 'CPU Only', color: 'var(--blue)' }, { text: 'Async', color: 'var(--cyan)' }]
     }
@@ -366,8 +381,9 @@ const NODES = [
     detail: {
       title: 'Stage 5: PostgreSQL Storage', sub: 'src/pipeline/store.py',
       sections: [
-        { h: 'Description', p: 'Stores session plans, drill blocks, and tactical contexts in PostgreSQL. Full JSON preserved in JSONB columns. Upsert with ON CONFLICT for idempotent re-ingestion.' },
+        { h: 'Description', p: 'Stores session plans, drill blocks, and tactical contexts in PostgreSQL. Full JSON preserved in JSONB columns. Upsert with ON CONFLICT for idempotent re-ingestion. Supports full plan replacement for validated editing.' },
         { h: 'Tables', items: ['session_plans \u2014 title, category, difficulty, author, raw_json', 'drill_blocks \u2014 name, setup, sequence[], coaching_points[], image_ref', 'tactical_contexts \u2014 methodology, game_element, lanes[], situation_type'] },
+        { h: 'Operations', items: ['store_session_plan \u2014 INSERT/UPSERT on initial ingest', 'replace_session_plan \u2014 DELETE drill_blocks (CASCADE) + UPDATE + re-INSERT', 'get_session_plan \u2014 Query by UUID'] },
         { h: 'Indexes', items: ['session_plans(title), session_plans(category)', 'drill_blocks(session_plan_id)', 'tactical_contexts(drill_block_id), tactical_contexts(methodology)'] },
       ],
       tags: [{ text: 'asyncpg', color: 'var(--purple)' }, { text: 'JSONB', color: 'var(--text-dim)' }]
@@ -423,17 +439,45 @@ const NODES = [
       title: 'PostgreSQL + pgvector', sub: 'Port 5434 \u2022 pgvector/pgvector:pg16',
       sections: [
         { h: 'Description', p: 'Persistent storage for all extracted data. Uses pgvector extension for future vector similarity search. Schema initialized via init-db.sql on first run.' },
-        { h: 'Database Schema', items: ['session_plans \u2014 UUID PK, JSONB raw_json, timestamps', 'drill_blocks \u2014 FK to session_plans, TEXT[] arrays for lists', 'tactical_contexts \u2014 FK to drill_blocks, methodology classification'] },
-        { h: 'Extensions', items: ['vector \u2014 pgvector for embedding storage (Phase 3B+)', 'uuid-ossp \u2014 UUID generation'] },
+        { h: 'Database Schema', items: ['session_plans \u2014 UUID PK, JSONB raw_json, timestamps', 'drill_blocks \u2014 FK to session_plans (ON DELETE CASCADE), TEXT[] arrays for lists', 'tactical_contexts \u2014 FK to drill_blocks (ON DELETE CASCADE), methodology classification'] },
+        { h: 'Extensions', items: ['vector \u2014 pgvector for embedding storage', 'uuid-ossp \u2014 UUID generation'] },
         { h: 'Connection', p: 'postgresql+asyncpg://soccer_analytics:***@postgres:5432/soccer_analytics' },
       ],
       tags: [{ text: 'pgvector', color: 'var(--purple)' }, { text: 'JSONB', color: 'var(--text-dim)' }, { text: 'asyncpg', color: 'var(--cyan)' }]
     }
   },
 
+  // Rendering
+  { id: 'pitch-renderer', label: 'Pitch Diagram', sub: 'mplsoccer \u2022 Opta coords', icon: '\u{1F3A8}',
+    x: 60, y: 330, w: 180, h: 50, layer: 'rendering', fill: '#1a2540', stroke: '#3b82f6',
+    detail: {
+      title: 'Pitch Diagram Renderer', sub: 'src/rendering/pitch.py',
+      sections: [
+        { h: 'Description', p: 'Renders soccer pitch diagrams using mplsoccer with Opta-style coordinates (0\u2013100). Player markers are color-coded by role.' },
+        { h: 'Player Colors', items: ['Goalkeeper: Amber (#F9A825)', 'Attacker: Blue (#1565C0)', 'Defender: Red (#C62828)', 'Neutral: Gray (#757575)'] },
+        { h: 'Output Formats', items: ['PNG: Raster image for embedding', 'PDF: Vector format for printing'] },
+        { h: 'API', p: 'render_drill_diagram(drill, format) \u2192 bytes' },
+      ],
+      tags: [{ text: 'mplsoccer', color: 'var(--amber)' }, { text: 'Opta', color: 'var(--cyan)' }]
+    }
+  },
+  { id: 'pdf-report', label: 'PDF Report', sub: 'reportlab \u2022 coaching PDF', icon: '\u{1F4D1}',
+    x: 60, y: 400, w: 180, h: 50, layer: 'rendering', fill: '#1a2540', stroke: '#3b82f6',
+    detail: {
+      title: 'PDF Report Generator', sub: 'src/rendering/pdf_report.py',
+      sections: [
+        { h: 'Description', p: 'Generates professional coaching PDF documents using reportlab. Produces a multi-page PDF with cover page, table of contents, and one page per drill with embedded pitch diagrams.' },
+        { h: 'PDF Structure', items: ['Cover page: title, author, category, difficulty, date', 'Table of contents with drill names and page numbers', 'Drill pages: pitch diagram, setup table, numbered sequence, coaching points', 'Tactical context box: methodology, game element, lanes, situation type'] },
+        { h: 'Technology', items: ['reportlab BaseDocTemplate with custom PageTemplates', 'multiBuild() for TOC page numbering', 'mplsoccer pitch diagrams embedded as PNG', 'A4 page size, Helvetica font (built-in)'] },
+        { h: 'Color Palette', items: ['Headers: Dark blue (#1a237e)', 'Tactical boxes: Green (#2e7d32)', 'Background: White'] },
+      ],
+      tags: [{ text: 'reportlab', color: 'var(--blue)' }, { text: 'PDF', color: 'var(--green)' }, { text: 'A4', color: 'var(--text-dim)' }]
+    }
+  },
+
   // MCP Tools
   { id: 'mcp-parse', label: 'parse_session_plan', sub: 'List/get session plans', icon: '\u{1F4CB}',
-    x: 60, y: 440, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
+    x: 60, y: 510, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
     detail: {
       title: 'MCP: parse_session_plan', sub: 'src/mcp/server.py',
       sections: [
@@ -445,7 +489,7 @@ const NODES = [
     }
   },
   { id: 'mcp-analyze', label: 'analyze_tactical_drill', sub: 'Drill analysis + context', icon: '\u{1F3AF}',
-    x: 60, y: 500, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
+    x: 60, y: 564, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
     detail: {
       title: 'MCP: analyze_tactical_drill', sub: 'src/mcp/server.py',
       sections: [
@@ -456,19 +500,32 @@ const NODES = [
     }
   },
   { id: 'mcp-render', label: 'render_drill_diagram', sub: 'Pitch diagram PNG/PDF', icon: '\u{1F3A8}',
-    x: 60, y: 560, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
+    x: 60, y: 618, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
     detail: {
       title: 'MCP: render_drill_diagram', sub: 'src/mcp/server.py',
       sections: [
         { h: 'Description', p: 'Render a pitch diagram for a drill using extracted player positions. Returns a base64-encoded image (PNG or PDF).' },
         { h: 'Parameters', items: ['plan_id (required): UUID of the session plan', 'drill_index (required): Zero-based index', 'format (optional): "png" or "pdf" (default: png)'] },
-        { h: 'Rendering', p: 'Uses mplsoccer to draw an Opta pitch with player markers colored by role (attacker=red, defender=blue, goalkeeper=yellow, neutral=gray).' },
+        { h: 'Rendering', p: 'Uses mplsoccer to draw an Opta pitch with player markers colored by role (attacker=blue, defender=red, goalkeeper=amber, neutral=gray).' },
       ],
       tags: [{ text: 'MCP', color: 'var(--green)' }, { text: 'mplsoccer', color: 'var(--amber)' }]
     }
   },
+  { id: 'mcp-export', label: 'export_session_pdf', sub: 'Full coaching PDF export', icon: '\u{1F4E4}',
+    x: 60, y: 672, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
+    detail: {
+      title: 'MCP: export_session_pdf', sub: 'src/mcp/server.py',
+      sections: [
+        { h: 'Description', p: 'Export a session plan as a professional coaching PDF document. Returns a base64-encoded PDF with cover page, table of contents, and drill pages with embedded pitch diagrams.' },
+        { h: 'Parameters', items: ['plan_id (required): UUID of the session plan'] },
+        { h: 'Returns', items: ['media_type: "application/pdf"', 'data: base64-encoded PDF bytes', 'size_bytes: size of the PDF'] },
+        { h: 'Error Handling', items: ['404: Session plan not found'] },
+      ],
+      tags: [{ text: 'MCP', color: 'var(--green)' }, { text: 'reportlab', color: 'var(--blue)' }, { text: 'base64', color: 'var(--text-dim)' }]
+    }
+  },
   { id: 'mcp-search', label: 'search_drills', sub: 'Semantic search via ColPali', icon: '\u{1F50E}',
-    x: 60, y: 620, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
+    x: 60, y: 726, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
     detail: {
       title: 'MCP: search_drills', sub: 'src/mcp/server.py',
       sections: [
@@ -522,10 +579,17 @@ const CONNECTIONS = [
   { from: 'search-query', to: 'orchestrator', type: 'data', label: 'q=...&k=5' },
   { from: 'orchestrator', to: 'colpali', type: 'gpu', label: 'POST /search' },
 
+  // Export flow
+  { from: 'export-query', to: 'orchestrator', type: 'data', label: 'plan_id' },
+  { from: 'orchestrator', to: 'pdf-report', type: 'data', label: 'SessionPlan' },
+  { from: 'pdf-report', to: 'pitch-renderer', type: 'data', label: 'DrillBlock' },
+  { from: 'pitch-renderer', to: 'pdf-report', type: 'data', label: 'PNG bytes' },
+
   // MCP tools
   { from: 'mcp-parse', to: 'orchestrator', type: 'http', label: 'GET /api/sessions' },
   { from: 'mcp-analyze', to: 'orchestrator', type: 'http', label: 'GET /api/sessions/{id}' },
-  { from: 'mcp-render', to: 'orchestrator', type: 'http', label: 'GET /api/sessions/{id}' },
+  { from: 'mcp-render', to: 'orchestrator', type: 'http', label: 'GET .../diagram' },
+  { from: 'mcp-export', to: 'orchestrator', type: 'http', label: 'GET .../export' },
   { from: 'mcp-search', to: 'orchestrator', type: 'http', label: 'GET /api/search' },
 
   // Docs
@@ -533,12 +597,13 @@ const CONNECTIONS = [
 ];
 
 const PRESETS = {
-  full:     { layers: { entry: true, orchestrator: true, pipeline: true, vlm: true, retrieval: true, storage: true, mcp: true, docs: true } },
-  pipeline: { layers: { entry: true, orchestrator: true, pipeline: true, vlm: true, retrieval: true, storage: false, mcp: false, docs: false } },
-  search:   { layers: { entry: true, orchestrator: true, pipeline: false, vlm: false, retrieval: true, storage: true, mcp: false, docs: false } },
-  data:     { layers: { entry: false, orchestrator: true, pipeline: true, vlm: false, retrieval: false, storage: true, mcp: false, docs: false } },
-  infra:    { layers: { entry: false, orchestrator: true, pipeline: false, vlm: true, retrieval: true, storage: true, mcp: false, docs: true } },
-  mcp:      { layers: { entry: false, orchestrator: true, pipeline: false, vlm: false, retrieval: false, storage: true, mcp: true, docs: false } },
+  full:     { layers: { entry: true, orchestrator: true, pipeline: true, vlm: true, retrieval: true, storage: true, rendering: true, mcp: true, docs: true } },
+  pipeline: { layers: { entry: true, orchestrator: true, pipeline: true, vlm: true, retrieval: true, storage: false, rendering: false, mcp: false, docs: false } },
+  search:   { layers: { entry: true, orchestrator: true, pipeline: false, vlm: false, retrieval: true, storage: true, rendering: false, mcp: false, docs: false } },
+  export:   { layers: { entry: true, orchestrator: true, pipeline: false, vlm: false, retrieval: false, storage: true, rendering: true, mcp: false, docs: false } },
+  data:     { layers: { entry: false, orchestrator: true, pipeline: true, vlm: false, retrieval: false, storage: true, rendering: false, mcp: false, docs: false } },
+  infra:    { layers: { entry: false, orchestrator: true, pipeline: false, vlm: true, retrieval: true, storage: true, rendering: false, mcp: false, docs: true } },
+  mcp:      { layers: { entry: false, orchestrator: true, pipeline: false, vlm: false, retrieval: false, storage: true, rendering: false, mcp: true, docs: false } },
 };
 
 function init() {

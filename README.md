@@ -90,7 +90,8 @@ ColQwen2 (~5-6 GB VRAM) + Qwen3-VL 8B (~5.4 GB) = ~11 GB total, fits in 16 GB RT
 | `POST` | `/api/ingest` | Upload and process a coaching PDF |
 | `GET` | `/api/sessions` | List stored session plans |
 | `GET` | `/api/sessions/{id}` | Get a session plan by ID |
-| `PUT` | `/api/sessions/{id}` | Update a session plan |
+| `PUT` | `/api/sessions/{id}` | Update a session plan (validated, re-enriched) |
+| `GET` | `/api/sessions/{id}/export` | Export session plan as coaching PDF |
 | `GET` | `/api/sessions/{id}/drills` | List drills for a session plan |
 | `GET` | `/api/sessions/{id}/drills/{idx}` | Get a specific drill by index |
 | `GET` | `/api/sessions/{id}/drills/{idx}/diagram` | Render pitch diagram (PNG) |
@@ -153,6 +154,7 @@ The `.mcp.json` file in the project root registers the server with Claude Code a
 | `parse_session_plan` | List all session plans or get a specific plan by ID |
 | `analyze_tactical_drill` | Get a drill with tactical context, optionally include diagram URL |
 | `render_drill_diagram` | Render a pitch diagram and return base64-encoded image |
+| `export_session_pdf` | Export a session plan as a professional coaching PDF (base64) |
 | `search_drills` | Semantic visual search across indexed drills (e.g. "counter attack 2v1") |
 
 ### Usage in Claude Code
@@ -161,6 +163,7 @@ Once configured, you can ask Claude Code:
 - "Show me the stored session plans"
 - "Analyze drill 0 from session plan {id}"
 - "Render the pitch diagram for drill 1"
+- "Export this session plan as a PDF"
 - "Search for pressing drills"
 
 ### Pitch Diagrams
@@ -316,7 +319,7 @@ soccer-analytics/
 │   │   └── app.py                  # Internal FastAPI (:8000 → :8005)
 │   ├── mcp/
 │   │   ├── __main__.py             # Entry point: python -m src.mcp
-│   │   └── server.py               # MCP stdio server (4 tools)
+│   │   └── server.py               # MCP stdio server (5 tools)
 │   ├── pipeline/
 │   │   ├── decompose.py            # Stage 1: Docling PDF decomposition
 │   │   ├── describe.py             # Stage 2 + 2b: VLM diagram analysis & position extraction
@@ -324,7 +327,8 @@ soccer-analytics/
 │   │   ├── validate.py             # Stage 4: Tactical enrichment
 │   │   └── store.py                # Stage 5: PostgreSQL storage
 │   ├── rendering/
-│   │   └── pitch.py                # mplsoccer pitch diagram renderer
+│   │   ├── pitch.py                # mplsoccer pitch diagram renderer
+│   │   └── pdf_report.py           # reportlab PDF report generator
 │   └── schemas/
 │       ├── session_plan.py         # SessionPlan, DrillBlock models
 │       └── tactical.py             # 2v1 methodology enums
@@ -332,9 +336,11 @@ soccer-analytics/
 │   ├── test_schemas.py
 │   ├── test_pipeline.py
 │   ├── test_rendering.py           # Pitch rendering unit tests
+│   ├── test_pdf_report.py          # PDF report generation tests
 │   ├── test_mcp.py                 # MCP tool unit tests (mocked)
 │   ├── test_colpali.py             # ColPali IndexManager unit tests
 │   ├── test_search.py              # Search endpoint unit tests
+│   ├── test_sessions_update.py     # Session update endpoint tests
 │   └── test_api.py
 └── documents/                      # Sample PDFs for testing
 ```
@@ -369,7 +375,7 @@ docker compose -f docker-compose.yml -f docker-compose.windows.yml down -v
 - **Phase 2** (Complete): MCP server interface, mplsoccer pitch diagram rendering
 - **Phase 2.5** (Complete): Two-pass VLM position extraction for improved player position yield
 - **Phase 3A** (Complete): ColPali/byaldi visual semantic search (text queries, FAISS index)
-- **Phase 3B** (Planned): Image-upload search, session plan modification + PDF regeneration
+- **Phase 3B** (Complete): Validated session plan editing with tactical re-enrichment, PDF export
 
 ## License
 

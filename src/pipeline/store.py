@@ -12,50 +12,19 @@ from src.schemas.session_plan import SessionPlan
 logger = logging.getLogger(__name__)
 
 
-async def store_session_plan(
-    session_plan: SessionPlan,
+async def _insert_drill_blocks(
+    plan_id: UUID,
+    drills: list,
     db: AsyncSession,
-) -> UUID:
-    """Store a session plan and its drill blocks in PostgreSQL.
+) -> None:
+    """Insert drill blocks and their tactical contexts for a session plan.
 
     Args:
-        session_plan: Validated session plan to store.
-        db: Async database session.
-
-    Returns:
-        UUID of the stored session plan.
+        plan_id: UUID of the parent session plan.
+        drills: List of DrillBlock objects to insert.
+        db: Async database session (caller manages commit).
     """
-    logger.info(f"Storing session plan: {session_plan.metadata.title}")
-
-    plan_json = session_plan.model_dump(mode="json")
-    plan_id = session_plan.id
-
-    await db.execute(
-        text("""
-            INSERT INTO session_plans (id, title, category, difficulty, author,
-                                       source_filename, source_page_count,
-                                       extraction_timestamp, raw_json)
-            VALUES (:id, :title, :category, :difficulty, :author,
-                    :source_filename, :source_page_count,
-                    :extraction_timestamp, :raw_json)
-            ON CONFLICT (id) DO UPDATE SET
-                raw_json = EXCLUDED.raw_json,
-                updated_at = NOW()
-        """),
-        {
-            "id": str(plan_id),
-            "title": session_plan.metadata.title,
-            "category": session_plan.metadata.category,
-            "difficulty": session_plan.metadata.difficulty,
-            "author": session_plan.metadata.author,
-            "source_filename": session_plan.source.filename,
-            "source_page_count": session_plan.source.page_count,
-            "extraction_timestamp": session_plan.source.extraction_timestamp,
-            "raw_json": json.dumps(plan_json),
-        },
-    )
-
-    for drill in session_plan.drills:
+    for drill in drills:
         drill_json = drill.model_dump(mode="json")
         await db.execute(
             text("""
@@ -115,11 +84,113 @@ async def store_session_plan(
                 },
             )
 
+
+async def store_session_plan(
+    session_plan: SessionPlan,
+    db: AsyncSession,
+) -> UUID:
+    """Store a session plan and its drill blocks in PostgreSQL.
+
+    Args:
+        session_plan: Validated session plan to store.
+        db: Async database session.
+
+    Returns:
+        UUID of the stored session plan.
+    """
+    logger.info(f"Storing session plan: {session_plan.metadata.title}")
+
+    plan_json = session_plan.model_dump(mode="json")
+    plan_id = session_plan.id
+
+    await db.execute(
+        text("""
+            INSERT INTO session_plans (id, title, category, difficulty, author,
+                                       source_filename, source_page_count,
+                                       extraction_timestamp, raw_json)
+            VALUES (:id, :title, :category, :difficulty, :author,
+                    :source_filename, :source_page_count,
+                    :extraction_timestamp, :raw_json)
+            ON CONFLICT (id) DO UPDATE SET
+                raw_json = EXCLUDED.raw_json,
+                updated_at = NOW()
+        """),
+        {
+            "id": str(plan_id),
+            "title": session_plan.metadata.title,
+            "category": session_plan.metadata.category,
+            "difficulty": session_plan.metadata.difficulty,
+            "author": session_plan.metadata.author,
+            "source_filename": session_plan.source.filename,
+            "source_page_count": session_plan.source.page_count,
+            "extraction_timestamp": session_plan.source.extraction_timestamp,
+            "raw_json": json.dumps(plan_json),
+        },
+    )
+
+    await _insert_drill_blocks(plan_id, session_plan.drills, db)
+
     await db.commit()
     logger.info(
         f"Stored session plan {plan_id} with {len(session_plan.drills)} drills"
     )
     return plan_id
+
+
+async def replace_session_plan(
+    plan_id: UUID,
+    session_plan: SessionPlan,
+    db: AsyncSession,
+) -> None:
+    """Replace a session plan's data entirely (drills, tactical contexts, metadata).
+
+    Deletes existing drill_blocks (cascading to tactical_contexts),
+    updates the session_plans row, and inserts fresh drill blocks.
+
+    Args:
+        plan_id: UUID of the existing session plan.
+        session_plan: New validated session plan data.
+        db: Async database session.
+    """
+    logger.info(f"Replacing session plan {plan_id}: {session_plan.metadata.title}")
+
+    plan_json = session_plan.model_dump(mode="json")
+
+    # Delete existing drill blocks (CASCADE deletes tactical_contexts)
+    await db.execute(
+        text("DELETE FROM drill_blocks WHERE session_plan_id = :plan_id"),
+        {"plan_id": str(plan_id)},
+    )
+
+    # Update session plan row
+    await db.execute(
+        text("""
+            UPDATE session_plans
+            SET title = :title,
+                category = :category,
+                difficulty = :difficulty,
+                author = :author,
+                raw_json = :raw_json,
+                updated_at = NOW()
+            WHERE id = :id
+        """),
+        {
+            "id": str(plan_id),
+            "title": session_plan.metadata.title,
+            "category": session_plan.metadata.category,
+            "difficulty": session_plan.metadata.difficulty,
+            "author": session_plan.metadata.author,
+            "raw_json": json.dumps(plan_json),
+        },
+    )
+
+    # Insert new drill blocks + tactical contexts
+    await _insert_drill_blocks(plan_id, session_plan.drills, db)
+
+    await db.commit()
+    logger.info(
+        f"Replaced session plan {plan_id} with {len(session_plan.drills)} drills"
+    )
 
 
 async def get_session_plan(

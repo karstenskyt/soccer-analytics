@@ -107,6 +107,29 @@ async def render_drill_diagram(
 
 
 @mcp.tool()
+async def export_session_pdf(plan_id: str) -> str:
+    """Export a session plan as a professional coaching PDF document.
+
+    Returns a base64-encoded PDF with cover page, table of contents,
+    and one page per drill with pitch diagrams and tactical context.
+
+    Args:
+        plan_id: UUID of the session plan to export.
+    """
+    resp = await _api_get(f"/api/sessions/{plan_id}/export?format=pdf")
+    if resp.status_code == 404:
+        return json.dumps({"error": f"Session plan {plan_id} not found"})
+    resp.raise_for_status()
+
+    encoded = base64.b64encode(resp.content).decode("ascii")
+    return json.dumps({
+        "media_type": "application/pdf",
+        "data": encoded,
+        "size_bytes": len(resp.content),
+    })
+
+
+@mcp.tool()
 async def search_drills(query: str, k: int = 5) -> str:
     """Search indexed drills using visual semantic retrieval.
 
