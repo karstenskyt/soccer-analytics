@@ -14,12 +14,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0t64 \
     && rm -rf /var/lib/apt/lists/*
 
-# DGX: Back up NVIDIA torch (PyPI ARM64 wheels are CPU-only)
+# DGX: Back up NVIDIA torch/torchvision (PyPI ARM64 wheels are CPU-only, NVIDIA's has CUDA)
 RUN if [ "${PLATFORM}" = "dgx" ]; then \
         PYDIR=$(python -c "import site; print(site.getsitepackages()[0])") && \
         mkdir -p /tmp/nv_backup && \
         cp -a ${PYDIR}/torch /tmp/nv_backup/torch && \
-        cp -a ${PYDIR}/torchvision /tmp/nv_backup/torchvision 2>/dev/null || true; \
+        cp -a ${PYDIR}/torch-*.dist-info /tmp/nv_backup/ && \
+        if [ -d "${PYDIR}/torchvision" ]; then \
+            cp -a ${PYDIR}/torchvision /tmp/nv_backup/torchvision && \
+            cp -a ${PYDIR}/torchvision-*.dist-info /tmp/nv_backup/; \
+        fi; \
     fi
 
 # Install Python dependencies
@@ -32,12 +36,17 @@ RUN if [ "${PLATFORM}" = "windows" ]; then \
         pip install --no-cache-dir -r requirements.txt; \
     fi
 
-# DGX: Restore NVIDIA torch (pip may have replaced it with CPU-only PyPI version)
+# DGX: Restore NVIDIA torch/torchvision (pip may have replaced them with CPU-only PyPI versions)
 RUN if [ "${PLATFORM}" = "dgx" ]; then \
         PYDIR=$(python -c "import site; print(site.getsitepackages()[0])") && \
-        rm -rf ${PYDIR}/torch ${PYDIR}/torchvision && \
+        rm -rf ${PYDIR}/torch ${PYDIR}/torch-*.dist-info && \
+        rm -rf ${PYDIR}/torchvision ${PYDIR}/torchvision-*.dist-info && \
         cp -a /tmp/nv_backup/torch ${PYDIR}/torch && \
-        cp -a /tmp/nv_backup/torchvision ${PYDIR}/torchvision 2>/dev/null || true && \
+        cp -a /tmp/nv_backup/torch-*.dist-info ${PYDIR}/ && \
+        if [ -d /tmp/nv_backup/torchvision ]; then \
+            cp -a /tmp/nv_backup/torchvision ${PYDIR}/torchvision && \
+            cp -a /tmp/nv_backup/torchvision-*.dist-info ${PYDIR}/; \
+        fi && \
         rm -rf /tmp/nv_backup; \
     fi
 

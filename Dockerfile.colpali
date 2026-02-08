@@ -1,16 +1,52 @@
-FROM python:3.12-slim
+# Multi-platform Dockerfile for ColPali visual retrieval service
+# Build args:
+#   BASE_IMAGE: Platform-specific PyTorch image (see docker-compose.{platform}.yml)
+#   PLATFORM: windows or dgx
+
+ARG BASE_IMAGE=python:3.12-slim
+FROM ${BASE_IMAGE}
+
+ARG PLATFORM=windows
 
 WORKDIR /app
 
 # System dependencies for PDF processing (poppler for pdf2image)
+# build-essential needed for ARM64 (no pre-built wheels for pytrec-eval-terrier)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     poppler-utils \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
+
+# DGX: Back up NVIDIA torch/torchvision (PyPI ARM64 torch is CPU-only, NVIDIA's has CUDA)
+RUN if [ "${PLATFORM}" = "dgx" ]; then \
+        PYDIR=$(python -c "import site; print(site.getsitepackages()[0])") && \
+        mkdir -p /tmp/nv_backup && \
+        cp -a ${PYDIR}/torch /tmp/nv_backup/torch && \
+        cp -a ${PYDIR}/torch-*.dist-info /tmp/nv_backup/ && \
+        if [ -d "${PYDIR}/torchvision" ]; then \
+            cp -a ${PYDIR}/torchvision /tmp/nv_backup/torchvision && \
+            cp -a ${PYDIR}/torchvision-*.dist-info /tmp/nv_backup/; \
+        fi; \
+    fi
 
 # Install Python dependencies
 COPY requirements.colpali.txt ./
 RUN pip install --no-cache-dir -r requirements.colpali.txt
+
+# DGX: Restore NVIDIA torch/torchvision (pip may have replaced them with CPU-only PyPI versions)
+RUN if [ "${PLATFORM}" = "dgx" ]; then \
+        PYDIR=$(python -c "import site; print(site.getsitepackages()[0])") && \
+        rm -rf ${PYDIR}/torch ${PYDIR}/torch-*.dist-info && \
+        rm -rf ${PYDIR}/torchvision ${PYDIR}/torchvision-*.dist-info && \
+        cp -a /tmp/nv_backup/torch ${PYDIR}/torch && \
+        cp -a /tmp/nv_backup/torch-*.dist-info ${PYDIR}/ && \
+        if [ -d /tmp/nv_backup/torchvision ]; then \
+            cp -a /tmp/nv_backup/torchvision ${PYDIR}/torchvision && \
+            cp -a /tmp/nv_backup/torchvision-*.dist-info ${PYDIR}/; \
+        fi && \
+        rm -rf /tmp/nv_backup; \
+    fi
 
 # Copy ColPali service code
 COPY src/colpali/ ./src/colpali/

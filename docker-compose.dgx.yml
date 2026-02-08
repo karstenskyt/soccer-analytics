@@ -41,6 +41,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.colpali
+      args:
+        # 25.11 container required for Blackwell GPU (sm_121) support
+        BASE_IMAGE: nvcr.io/nvidia/pytorch:25.11-py3
+        PLATFORM: dgx
     restart: unless-stopped
     ports:
       - "${COLPALI_PORT:-8005}:8000"
