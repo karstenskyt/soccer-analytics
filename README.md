@@ -1,6 +1,6 @@
 # Soccer Analytics Service
 
-A Docker-based service for extracting, understanding, and storing structured information from soccer coaching PDFs. Processes session plans and tactical manuals (such as Peters/Schumacher *Two Versus One*) through a 5-stage pipeline combining PDF decomposition, vision-language model analysis, and structured data extraction.
+A Docker-based service for extracting, understanding, and storing structured information from soccer coaching PDFs. Processes session plans and tactical manuals (such as Peters/Schumacher *Two Versus One*) through a 6-stage pipeline combining PDF decomposition, vision-language model analysis, structured data extraction, and visual semantic search via ColPali.
 
 **[View Interactive Architecture Diagram](architecture.html)** (open locally in browser)
 
@@ -10,7 +10,7 @@ A Docker-based service for extracting, understanding, and storing structured inf
 
 - Docker Desktop with WSL2 (Windows) or Docker Engine (Linux)
 - NVIDIA GPU with drivers installed (for VLM inference via Ollama)
-- ~10 GB disk space for Docker images and model weights
+- ~16 GB disk space for Docker images and model weights
 
 ### Windows (RTX 5070 Ti / CUDA)
 
@@ -41,7 +41,7 @@ curl http://localhost:8004/api/sessions
 
 ## Architecture
 
-Four Docker services compose the system. The orchestrator runs on CPU; only Ollama requires GPU access.
+Five Docker services compose the system. The orchestrator runs on CPU; Ollama and ColPali share the GPU with natural temporal separation (VLM inference completes before ColPali indexing).
 
 ```
 PDF Upload ──> FastAPI Orchestrator (:8004)
@@ -61,18 +61,27 @@ PDF Upload ──> FastAPI Orchestrator (:8004)
                   ├─ Stage 4: Validation & Tactical Enrichment
                   │     └─ Game element, situation type, lane detection
                   │
-                  └─ Stage 5: PostgreSQL Storage (:5434)
-                        └─ session_plans, drill_blocks, tactical_contexts
+                  ├─ Stage 5: PostgreSQL Storage (:5434)
+                  │     └─ session_plans, drill_blocks, tactical_contexts
+                  │
+                  └─ Stage 6: ColPali Visual Indexing (best-effort)
+                        └─ byaldi FAISS index via ColPali (:8005, GPU)
+
+Search Query ──> GET /api/search?q=...
+                  │
+                  └─ Orchestrator → ColPali → FAISS similarity
+                        └─ Results enriched with PostgreSQL metadata
 ```
 
 | Service | Image | Port | GPU |
 |---------|-------|------|-----|
 | **Orchestrator** | `python:3.12-slim` + Docling | `8004` | No |
 | **Ollama** | `ollama/ollama:latest` | `11434` | Yes (all layers) |
+| **ColPali** | `python:3.12-slim` + byaldi | `8005` | Yes (ColQwen2) |
 | **PostgreSQL** | `pgvector/pgvector:pg16` | `5434` | No |
 | **Swagger UI** | `swaggerapi/swagger-ui` | `8084` | No |
 
-All ports are configurable via `.env`. See [Interactive Architecture Diagram](architecture.html) for a visual overview.
+ColQwen2 (~5-6 GB VRAM) + Qwen3-VL 8B (~5.4 GB) = ~11 GB total, fits in 16 GB RTX 5070 Ti. All ports are configurable via `.env`. See [Interactive Architecture Diagram](architecture.html) for a visual overview.
 
 ## API Endpoints
 
@@ -86,6 +95,7 @@ All ports are configurable via `.env`. See [Interactive Architecture Diagram](ar
 | `GET` | `/api/sessions/{id}/drills/{idx}` | Get a specific drill by index |
 | `GET` | `/api/sessions/{id}/drills/{idx}/diagram` | Render pitch diagram (PNG) |
 | `POST` | `/api/render` | Render diagram from ad-hoc DrillBlock JSON |
+| `GET` | `/api/search?q=...&k=5` | Semantic visual search across indexed drills |
 | `GET` | `/health` | Health check |
 | `GET` | `/docs` | Auto-generated OpenAPI docs |
 
@@ -101,6 +111,7 @@ Response:
 {
   "status": "success",
   "plan_id": "30102057-936e-4cd2-a938-7f4968b1e5c4",
+  "indexed": true,
   "session_plan": {
     "metadata": {
       "title": "GK Training Session",
@@ -142,6 +153,7 @@ The `.mcp.json` file in the project root registers the server with Claude Code a
 | `parse_session_plan` | List all session plans or get a specific plan by ID |
 | `analyze_tactical_drill` | Get a drill with tactical context, optionally include diagram URL |
 | `render_drill_diagram` | Render a pitch diagram and return base64-encoded image |
+| `search_drills` | Semantic visual search across indexed drills (e.g. "counter attack 2v1") |
 
 ### Usage in Claude Code
 
@@ -149,6 +161,7 @@ Once configured, you can ask Claude Code:
 - "Show me the stored session plans"
 - "Analyze drill 0 from session plan {id}"
 - "Render the pitch diagram for drill 1"
+- "Search for pressing drills"
 
 ### Pitch Diagrams
 
@@ -188,6 +201,10 @@ Each drill block is analyzed for tactical context using keyword detection:
 ### Stage 5: PostgreSQL Storage
 
 Session plans, drill blocks, and tactical contexts are stored in PostgreSQL with pgvector support. Full JSON is preserved in JSONB columns for flexible querying.
+
+### Stage 6: ColPali Visual Indexing (Best-Effort)
+
+After database storage, the orchestrator sends the PDF to the ColPali service for visual indexing using [byaldi](https://github.com/AnswerDotAI/byaldi) (a RAG wrapper around [ColQwen2](https://huggingface.co/vidore/colqwen2-v1.0)). The ColPali service indexes each page into a FAISS index, enabling text-to-visual semantic search across all ingested PDFs. This stage is non-fatal — if the ColPali service is unavailable, ingestion still succeeds. Both services share the `upload_data` volume so no file transfer is needed.
 
 ## Data Model
 
@@ -235,13 +252,16 @@ tactical_contexts
 | `OLLAMA_PORT` | `11434` | Ollama service port |
 | `DB_PORT` | `5434` | PostgreSQL port |
 | `DOCS_PORT` | `8084` | Swagger UI port |
+| `COLPALI_PORT` | `8005` | ColPali visual retrieval service port |
 | `VLM_MODEL` | `qwen3-vl:8b` | Ollama vision model |
+| `COLPALI_MODEL` | `vidore/colqwen2-v1.0` | ColPali retrieval model |
 | `POSTGRES_USER` | `soccer_analytics` | Database user |
 | `POSTGRES_PASSWORD` | `changeme_soccer_2026` | Database password |
 | `POSTGRES_DB` | `soccer_analytics` | Database name |
 | `MAX_UPLOAD_SIZE_MB` | `50` | Max PDF upload size |
 | `EXTRACT_POSITIONS` | `true` | Enable Pass 2 position extraction |
 | `EXTRACTION_TIMEOUT_SECONDS` | `300` | Pipeline timeout |
+| `COLPALI_TIMEOUT_SECONDS` | `120` | ColPali indexing/search timeout |
 
 ### Platform Profiles
 
@@ -267,9 +287,11 @@ soccer-analytics/
 ├── docker-compose.windows.yml      # Windows GPU services
 ├── docker-compose.dgx.yml          # DGX GPU services
 ├── Dockerfile.template             # Multi-platform orchestrator image
+├── Dockerfile.colpali              # ColPali visual retrieval service
 ├── requirements.txt                # Common Python dependencies
 ├── requirements.windows.txt        # Windows-specific deps
 ├── requirements.dgx.txt            # DGX-specific deps
+├── requirements.colpali.txt        # ColPali service deps (byaldi, torch)
 ├── requirements.mcp.txt            # Host-side MCP server deps
 ├── .mcp.json                       # MCP server registration
 ├── .env.windows.example            # Windows env template
@@ -281,14 +303,20 @@ soccer-analytics/
 │   ├── api/
 │   │   ├── main.py                 # FastAPI app + lifespan
 │   │   ├── config.py               # pydantic-settings config
-│   │   ├── deps.py                 # DB session + Ollama client
+│   │   ├── deps.py                 # DB session + Ollama/ColPali clients
 │   │   └── routes/
-│   │       ├── ingest.py           # POST /api/ingest
+│   │       ├── ingest.py           # POST /api/ingest (6-stage pipeline)
 │   │       ├── sessions.py         # GET/PUT /api/sessions
-│   │       └── drills.py           # Drill + diagram endpoints
+│   │       ├── drills.py           # Drill + diagram endpoints
+│   │       └── search.py           # GET /api/search (visual retrieval)
+│   ├── colpali/
+│   │   ├── __init__.py             # Package init
+│   │   ├── config.py               # ColPali service settings
+│   │   ├── index_manager.py        # byaldi FAISS index + doc mapping
+│   │   └── app.py                  # Internal FastAPI (:8000 → :8005)
 │   ├── mcp/
 │   │   ├── __main__.py             # Entry point: python -m src.mcp
-│   │   └── server.py               # MCP stdio server (3 tools)
+│   │   └── server.py               # MCP stdio server (4 tools)
 │   ├── pipeline/
 │   │   ├── decompose.py            # Stage 1: Docling PDF decomposition
 │   │   ├── describe.py             # Stage 2 + 2b: VLM diagram analysis & position extraction
@@ -305,6 +333,8 @@ soccer-analytics/
 │   ├── test_pipeline.py
 │   ├── test_rendering.py           # Pitch rendering unit tests
 │   ├── test_mcp.py                 # MCP tool unit tests (mocked)
+│   ├── test_colpali.py             # ColPali IndexManager unit tests
+│   ├── test_search.py              # Search endpoint unit tests
 │   └── test_api.py
 └── documents/                      # Sample PDFs for testing
 ```
@@ -338,7 +368,8 @@ docker compose -f docker-compose.yml -f docker-compose.windows.yml down -v
 - **Phase 1.5** (Complete): Extraction quality - drill grouping, metadata parsing, VLM classification
 - **Phase 2** (Complete): MCP server interface, mplsoccer pitch diagram rendering
 - **Phase 2.5** (Complete): Two-pass VLM position extraction for improved player position yield
-- **Phase 3** (Planned): DGX deployment, ColPali visual retrieval, session plan regeneration
+- **Phase 3A** (Complete): ColPali/byaldi visual semantic search (text queries, FAISS index)
+- **Phase 3B** (Planned): Image-upload search, session plan modification + PDF regeneration
 
 ## License
 

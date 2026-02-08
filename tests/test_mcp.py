@@ -9,6 +9,7 @@ from src.mcp.server import (
     analyze_tactical_drill,
     parse_session_plan,
     render_drill_diagram,
+    search_drills,
 )
 
 
@@ -119,3 +120,54 @@ async def test_render_drill_diagram_invalid_format():
     )
     parsed = json.loads(result)
     assert "error" in parsed
+
+
+@pytest.mark.asyncio
+async def test_search_drills_returns_results():
+    """search_drills should return search results."""
+    search_data = {
+        "query": "counter attack",
+        "results": [
+            {
+                "score": 0.92,
+                "page_num": 1,
+                "plan_id": "abc-123",
+                "filename": "session.pdf",
+                "plan_title": "Counter Attack Training",
+            }
+        ],
+        "total": 1,
+    }
+
+    with patch("src.mcp.server._api_get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = _mock_response(json_data=search_data)
+        result = await search_drills(query="counter attack", k=3)
+
+    parsed = json.loads(result)
+    assert parsed["total"] == 1
+    assert parsed["results"][0]["score"] == 0.92
+    mock_get.assert_called_once_with("/api/search?q=counter%20attack&k=3")
+
+
+@pytest.mark.asyncio
+async def test_search_drills_not_configured():
+    """search_drills should return error when service not configured."""
+    with patch("src.mcp.server._api_get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = _mock_response(status_code=503)
+        result = await search_drills(query="pressing")
+
+    parsed = json.loads(result)
+    assert "error" in parsed
+    assert "not configured" in parsed["error"]
+
+
+@pytest.mark.asyncio
+async def test_search_drills_service_unavailable():
+    """search_drills should return error when ColPali is down."""
+    with patch("src.mcp.server._api_get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = _mock_response(status_code=502)
+        result = await search_drills(query="rondo")
+
+    parsed = json.loads(result)
+    assert "error" in parsed
+    assert "unavailable" in parsed["error"]

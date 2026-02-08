@@ -106,6 +106,28 @@ async def render_drill_diagram(
     })
 
 
+@mcp.tool()
+async def search_drills(query: str, k: int = 5) -> str:
+    """Search indexed drills using visual semantic retrieval.
+
+    Uses ColPali to find drills matching natural language queries
+    like "counter attack 2v1 drills" or "goalkeeper training exercises".
+
+    Args:
+        query: Natural language search query.
+        k: Number of results to return (default 5).
+    """
+    from urllib.parse import quote
+
+    resp = await _api_get(f"/api/search?q={quote(query)}&k={k}")
+    if resp.status_code == 503:
+        return json.dumps({"error": "Visual search is not configured"})
+    if resp.status_code == 502:
+        return json.dumps({"error": "ColPali service is unavailable"})
+    resp.raise_for_status()
+    return json.dumps(resp.json(), indent=2)
+
+
 def main():
     """Run the MCP server on stdio transport."""
     mcp.run(transport="stdio")

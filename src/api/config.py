@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     # Position extraction (Pass 2)
     extract_positions: bool = True
 
+    # ColPali visual retrieval (empty = disabled)
+    colpali_url: str = ""
+    colpali_timeout_seconds: int = 120
+
     # Processing
     max_upload_size_mb: int = 50
     extraction_timeout_seconds: int = 300

@@ -5,11 +5,12 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.config import settings
-from src.api.deps import get_db
+from src.api.deps import get_colpali_client, get_db
 from src.pipeline.decompose import decompose_pdf
 from src.pipeline.describe import describe_diagrams, extract_all_positions
 from src.pipeline.extract import extract_session_plan
@@ -27,15 +28,17 @@ async def ingest_pdf(
         ..., description="Soccer coaching PDF to process"
     ),
     db: AsyncSession = Depends(get_db),
+    colpali_client: httpx.AsyncClient | None = Depends(get_colpali_client),
 ):
     """Upload and process a soccer coaching PDF.
 
-    Runs the full 5-stage pipeline:
+    Runs the full 6-stage pipeline:
     1. PDF decomposition (Docling)
     2. Diagram analysis (Qwen3-VL)
     3. Schema extraction
     4. Validation & enrichment
     5. Database storage
+    6. ColPali visual indexing (best-effort)
 
     Returns the extracted SessionPlan JSON.
     """
@@ -98,11 +101,32 @@ async def ingest_pdf(
         # Stage 5: Store in database
         plan_id = await store_session_plan(session_plan, db)
 
+        # Stage 6: Index in ColPali for visual retrieval (best-effort)
+        indexed = False
+        if colpali_client is not None:
+            try:
+                resp = await colpali_client.post(
+                    "/index",
+                    json={
+                        "pdf_path": str(pdf_path),
+                        "plan_id": str(plan_id),
+                        "filename": safe_filename,
+                    },
+                )
+                resp.raise_for_status()
+                indexed = True
+                logger.info(f"Indexed {safe_filename} in ColPali")
+            except Exception as idx_err:
+                logger.warning(
+                    f"ColPali indexing failed (non-fatal): {idx_err}"
+                )
+
         logger.info(f"Successfully processed {file.filename} -> {plan_id}")
 
         return {
             "status": "success",
             "plan_id": str(plan_id),
+            "indexed": indexed,
             "session_plan": session_plan.model_dump(mode="json"),
         }
 

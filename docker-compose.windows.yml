@@ -37,6 +37,29 @@ services:
     networks:
       - soccer-analytics
 
+  colpali:
+    build:
+      context: .
+      dockerfile: Dockerfile.colpali
+    restart: unless-stopped
+    ports:
+      - "${COLPALI_PORT:-8005}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      COLPALI_MODEL_NAME: ${COLPALI_MODEL:-vidore/colqwen2-v1.0}
+    volumes:
+      - upload_data:/app/uploads
+      - colpali_index:/data/colpali_index
+      - colpali_cache:/root/.cache
+    networks:
+      - soccer-analytics
+
   orchestrator:
     build:
       context: .
@@ -52,12 +75,16 @@ services:
         condition: service_healthy
       ollama:
         condition: service_healthy
+      colpali:
+        condition: service_healthy
     environment:
       OLLAMA_URL: http://ollama:11434
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-soccer_analytics}:${POSTGRES_PASSWORD:-changeme_soccer_2026}@postgres:5432/${POSTGRES_DB:-soccer_analytics}
       VLM_MODEL: ${VLM_MODEL:-qwen3-vl:8b}
       MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-50}
       EXTRACTION_TIMEOUT_SECONDS: ${EXTRACTION_TIMEOUT_SECONDS:-300}
+      COLPALI_URL: http://colpali:8000
+      COLPALI_TIMEOUT_SECONDS: ${COLPALI_TIMEOUT_SECONDS:-120}
     volumes:
       - upload_data:/app/uploads
       - model_cache:/root/.cache

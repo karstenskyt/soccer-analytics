@@ -26,12 +26,14 @@
     --red-bg: rgba(239,68,68,0.1);
     --cyan: #06b6d4;
     --cyan-bg: rgba(6,182,212,0.1);
+    --gray: #6b7280;
+    --gray-bg: rgba(107,114,128,0.1);
   }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
   .layout { display: grid; grid-template-columns: 280px 1fr; grid-template-rows: 1fr auto; height: 100vh; }
   .sidebar { background: var(--surface); border-right: 1px solid var(--border); overflow-y: auto; padding: 16px; grid-row: 1 / 3; }
   .canvas-area { position: relative; overflow: hidden; }
-  .prompt-area { background: var(--surface); border-top: 1px solid var(--border); padding: 12px 16px; max-height: 180px; overflow-y: auto; }
+  .prompt-area { background: var(--surface); border-top: 1px solid var(--border); padding: 12px 16px; max-height: 200px; overflow-y: auto; }
 
   h1 { font-size: 15px; font-weight: 600; margin-bottom: 4px; color: var(--green); }
   h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin: 16px 0 8px; }
@@ -50,8 +52,9 @@
   .toggle-row input { display: none; }
   .toggle-row.off { opacity: 0.4; }
 
+  /* Detail panel */
   .detail-panel {
-    position: absolute; top: 12px; right: 12px; width: 320px;
+    position: absolute; top: 12px; right: 12px; width: 340px;
     background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
     padding: 16px; z-index: 10; box-shadow: 0 8px 32px rgba(0,0,0,0.4);
     display: none; max-height: calc(100% - 24px); overflow-y: auto;
@@ -66,6 +69,54 @@
   .detail-section ul { padding-left: 16px; }
   .detail-tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; margin: 2px; }
 
+  /* Comment button inside detail panel */
+  .comment-btn {
+    display: block; width: 100%; padding: 8px; margin-top: 12px;
+    background: var(--blue-bg); border: 1px solid var(--blue); border-radius: 6px;
+    color: var(--blue); font-size: 12px; cursor: pointer; font-weight: 600; text-align: center;
+  }
+  .comment-btn:hover { background: var(--blue); color: var(--bg); }
+
+  /* Comment modal */
+  .modal-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6); z-index: 100; display: none;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px; width: 420px; max-width: 90vw; box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+  }
+  .modal h3 { font-size: 14px; margin-bottom: 4px; }
+  .modal .modal-sub { font-size: 11px; color: var(--text-dim); margin-bottom: 12px; font-family: 'SF Mono', 'Consolas', monospace; }
+  .modal textarea {
+    width: 100%; height: 80px; padding: 10px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface2); color: var(--text); font-family: inherit; font-size: 12px; resize: vertical;
+  }
+  .modal textarea:focus { outline: none; border-color: var(--blue); }
+  .modal-actions { display: flex; gap: 8px; margin-top: 12px; justify-content: flex-end; }
+  .modal-actions button {
+    padding: 6px 16px; border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 600; border: 1px solid var(--border);
+  }
+  .modal-cancel { background: var(--surface2); color: var(--text-dim); }
+  .modal-save { background: var(--blue); color: white; border-color: var(--blue) !important; }
+  .modal-save:hover { opacity: 0.9; }
+
+  /* Comments sidebar list */
+  .comment-item {
+    padding: 8px; margin-bottom: 4px; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; font-size: 11px; position: relative;
+  }
+  .comment-item .comment-target { font-weight: 600; color: var(--blue); margin-bottom: 2px; }
+  .comment-item .comment-text { color: var(--text-dim); line-height: 1.4; }
+  .comment-item .comment-delete {
+    position: absolute; top: 6px; right: 8px; background: none; border: none;
+    color: var(--text-dim); cursor: pointer; font-size: 14px; opacity: 0.5;
+  }
+  .comment-item .comment-delete:hover { opacity: 1; color: var(--red); }
+  .comment-count { font-size: 11px; color: var(--text-dim); font-weight: normal; }
+
   svg { width: 100%; height: 100%; }
   .node { cursor: pointer; transition: filter 0.15s; }
   .node:hover { filter: brightness(1.15); }
@@ -74,6 +125,7 @@
   .node-title { font-size: 12px; font-weight: 600; fill: var(--text); font-family: -apple-system, sans-serif; }
   .node-sub { font-size: 9px; fill: var(--text-dim); font-family: 'SF Mono', 'Consolas', monospace; }
   .node-icon { font-size: 16px; }
+  .comment-indicator { font-size: 10px; }
 
   .prompt-text { font-size: 12px; line-height: 1.6; color: var(--text-dim); white-space: pre-wrap; font-family: 'SF Mono', 'Consolas', monospace; }
   .copy-btn {
@@ -94,13 +146,15 @@
   .platform-toggle { display: flex; gap: 4px; margin-bottom: 12px; }
   .platform-btn { flex: 1; padding: 6px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); font-size: 11px; cursor: pointer; text-align: center; font-weight: 600; }
   .platform-btn.active { border-color: var(--green); color: var(--green); background: var(--green-bg); }
+
+  .no-comments { font-size: 11px; color: var(--text-dim); font-style: italic; }
 </style>
 </head>
 <body>
 <div class="layout">
   <div class="sidebar">
     <h1>Soccer Analytics</h1>
-    <div class="subtitle">Architecture Explorer v0.1.0</div>
+    <div class="subtitle">Architecture Explorer v0.2.0</div>
 
     <h2>Platform</h2>
     <div class="platform-toggle">
@@ -111,8 +165,10 @@
     <h2>View</h2>
     <button class="preset-btn active" data-preset="full" onclick="setPreset('full')">Full System</button>
     <button class="preset-btn" data-preset="pipeline" onclick="setPreset('pipeline')">Pipeline Flow</button>
+    <button class="preset-btn" data-preset="search" onclick="setPreset('search')">Search Flow</button>
     <button class="preset-btn" data-preset="data" onclick="setPreset('data')">Data Model</button>
     <button class="preset-btn" data-preset="infra" onclick="setPreset('infra')">Infrastructure</button>
+    <button class="preset-btn" data-preset="mcp" onclick="setPreset('mcp')">MCP Tools</button>
 
     <h2>Layers</h2>
     <div id="layer-toggles"></div>
@@ -120,8 +176,10 @@
     <h2>Connections</h2>
     <div id="conn-toggles"></div>
 
-    <h2>Details</h2>
-    <p style="font-size:11px;color:var(--text-dim)">Click any component in the diagram to view details.</p>
+    <h2>Comments <span class="comment-count" id="comment-count"></span></h2>
+    <div id="comments-list">
+      <div class="no-comments">Click any component, then "Add Comment" to annotate.</div>
+    </div>
   </div>
 
   <div class="canvas-area" id="canvas-area">
@@ -134,8 +192,8 @@
     <div class="legend">
       <div class="legend-row"><div class="legend-line" style="background:var(--green)"></div> Data Flow</div>
       <div class="legend-row"><div class="legend-line dashed"></div> GPU / API Call</div>
-      <div class="legend-row"><div class="legend-line" style="background:var(--blue)"></div> Storage</div>
-      <div class="legend-row"><div class="legend-line" style="background:var(--purple)"></div> HTTP</div>
+      <div class="legend-row"><div class="legend-line" style="background:var(--purple)"></div> Storage</div>
+      <div class="legend-row"><div class="legend-line" style="background:var(--gray)"></div> HTTP</div>
     </div>
     <div class="detail-panel" id="detail-panel">
       <button class="detail-close" onclick="closeDetail()">&times;</button>
@@ -149,13 +207,28 @@
   </div>
 </div>
 
+<!-- Comment modal -->
+<div class="modal-overlay" id="comment-modal">
+  <div class="modal">
+    <h3 id="modal-title">Add Comment</h3>
+    <div class="modal-sub" id="modal-sub"></div>
+    <textarea id="modal-textarea" placeholder="Describe what you want to change, add, or investigate about this component..."></textarea>
+    <div class="modal-actions">
+      <button class="modal-cancel" onclick="closeModal()">Cancel</button>
+      <button class="modal-save" onclick="saveComment()">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const LAYERS = [
-  { id: 'entry', label: 'Entry Point', color: '#22c55e' },
+  { id: 'entry', label: 'Entry Points', color: '#22c55e' },
   { id: 'orchestrator', label: 'Orchestrator', color: '#3b82f6' },
   { id: 'pipeline', label: 'Pipeline Stages', color: '#06b6d4' },
   { id: 'vlm', label: 'VLM Service', color: '#f59e0b' },
+  { id: 'retrieval', label: 'Visual Retrieval', color: '#ef4444' },
   { id: 'storage', label: 'Storage', color: '#a855f7' },
+  { id: 'mcp', label: 'MCP Tools', color: '#22c55e' },
   { id: 'docs', label: 'Documentation', color: '#6b7280' },
 ];
 
@@ -163,22 +236,25 @@ const CONN_TYPES = [
   { id: 'data', label: 'Data Flow', color: '#22c55e', dash: '' },
   { id: 'gpu', label: 'GPU / API', color: '#f59e0b', dash: '6,3' },
   { id: 'store', label: 'Storage', color: '#a855f7', dash: '' },
-  { id: 'http', label: 'HTTP', color: '#a855f7', dash: '4,4' },
+  { id: 'http', label: 'HTTP', color: '#6b7280', dash: '4,4' },
 ];
 
 const state = {
   platform: 'windows',
   preset: 'full',
-  layers: { entry: true, orchestrator: true, pipeline: true, vlm: true, storage: true, docs: true },
+  layers: { entry: true, orchestrator: true, pipeline: true, vlm: true, retrieval: true, storage: true, mcp: true, docs: true },
   connTypes: { data: true, gpu: true, store: true, http: true },
   selected: null,
   scale: 1,
   panX: 0, panY: 0,
+  comments: [],
+  commentTarget: null,
 };
 
 const NODES = [
-  { id: 'pdf-upload', label: 'PDF Upload', sub: 'REST API', icon: '\u{1F4C4}',
-    x: 420, y: 20, w: 160, h: 50, layer: 'entry', fill: '#1a3a2a', stroke: '#22c55e',
+  // Entry points
+  { id: 'pdf-upload', label: 'PDF Upload', sub: 'POST /api/ingest', icon: '\u{1F4C4}',
+    x: 420, y: 20, w: 170, h: 50, layer: 'entry', fill: '#1a3a2a', stroke: '#22c55e',
     detail: {
       title: 'PDF Upload', sub: 'POST /api/ingest',
       sections: [
@@ -189,21 +265,38 @@ const NODES = [
       tags: [{ text: 'FastAPI', color: 'var(--green)' }, { text: 'CPU', color: 'var(--blue)' }]
     }
   },
+  { id: 'search-query', label: 'Search Query', sub: 'GET /api/search', icon: '\u{1F50E}',
+    x: 80, y: 20, w: 170, h: 50, layer: 'entry', fill: '#1a3a2a', stroke: '#22c55e',
+    detail: {
+      title: 'Search Query', sub: 'GET /api/search?q=...&k=5',
+      sections: [
+        { h: 'Description', p: 'Semantic visual search across all indexed coaching PDFs. Text queries like "counter attack 2v1 drills" or "goalkeeper training" are encoded by ColQwen2 and matched against the FAISS page index.' },
+        { h: 'Flow', items: ['Orchestrator receives GET /api/search?q=...&k=5', 'Forwards POST /search to ColPali service', 'ColPali returns ranked {doc_id, page_num, score, plan_id}', 'Orchestrator enriches with PostgreSQL data (title, category, drill names)', 'Returns ranked results to client'] },
+        { h: 'Parameters', items: ['q (required): Natural language search query', 'k (default 5): Number of results to return (1\u201350)'] },
+        { h: 'Graceful Degradation', items: ['503 if COLPALI_URL not configured', '502 if ColPali service unreachable'] },
+      ],
+      tags: [{ text: 'Text Search', color: 'var(--green)' }, { text: 'Semantic', color: 'var(--cyan)' }]
+    }
+  },
+
+  // Orchestrator
   { id: 'orchestrator', label: 'FastAPI Orchestrator', sub: ':8004 \u2022 python:3.12-slim',  icon: '\u{2699}\u{FE0F}',
-    x: 370, y: 100, w: 260, h: 50, layer: 'orchestrator', fill: '#1a2540', stroke: '#3b82f6',
+    x: 320, y: 100, w: 270, h: 56, layer: 'orchestrator', fill: '#1a2540', stroke: '#3b82f6',
     detail: {
       title: 'FastAPI Orchestrator', sub: 'src/api/main.py \u2022 Port 8004',
       sections: [
-        { h: 'Description', p: 'Central coordination service running on CPU. Receives PDF uploads, runs the 5-stage pipeline, and exposes REST API for querying stored session plans.' },
+        { h: 'Description', p: 'Central coordination service running on CPU. Receives PDF uploads, runs the 6-stage pipeline (including ColPali visual indexing), and exposes REST API for querying stored session plans and semantic search.' },
         { h: 'Base Image', p: 'python:3.12-slim (no GPU needed \u2014 VLM inference delegated to Ollama via HTTP)' },
-        { h: 'Key Dependencies', items: ['FastAPI >= 0.115', 'Docling >= 2.70 (PDF decomposition)', 'Pydantic >= 2.10 (schema validation)', 'SQLAlchemy[asyncio] >= 2.0', 'httpx >= 0.27 (Ollama client)'] },
-        { h: 'API Endpoints', items: ['POST /api/ingest \u2014 Upload & process PDF', 'GET /api/sessions \u2014 List session plans', 'GET /api/sessions/{id} \u2014 Get by ID', 'PUT /api/sessions/{id} \u2014 Update', 'GET /health \u2014 Health check'] },
+        { h: 'Key Dependencies', items: ['FastAPI >= 0.115', 'Docling >= 2.70 (PDF decomposition)', 'Pydantic >= 2.10 (schema validation)', 'SQLAlchemy[asyncio] >= 2.0', 'httpx >= 0.27 (Ollama + ColPali client)'] },
+        { h: 'API Endpoints', items: ['POST /api/ingest \u2014 Upload & process PDF (6-stage pipeline)', 'GET /api/search?q=...&k=5 \u2014 Semantic visual search', 'GET /api/sessions \u2014 List session plans', 'GET /api/sessions/{id} \u2014 Get by ID', 'PUT /api/sessions/{id} \u2014 Update', 'GET /health \u2014 Health check'] },
       ],
       tags: [{ text: 'CPU Only', color: 'var(--blue)' }, { text: 'Async', color: 'var(--cyan)' }]
     }
   },
-  { id: 'stage1', label: '1. Decompose', sub: 'Docling PDF \u2192 Markdown + Images', icon: '\u{1F4D1}',
-    x: 80, y: 200, w: 170, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+
+  // Pipeline stages
+  { id: 'stage1', label: '1. Decompose', sub: 'Docling PDF \u2192 MD + Images', icon: '\u{1F4D1}',
+    x: 60, y: 210, w: 180, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
       title: 'Stage 1: PDF Decomposition', sub: 'src/pipeline/decompose.py',
       sections: [
@@ -216,7 +309,7 @@ const NODES = [
     }
   },
   { id: 'stage2', label: '2. Describe', sub: 'Pass 1: Classification', icon: '\u{1F441}\u{FE0F}',
-    x: 260, y: 200, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    x: 260, y: 210, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
       title: 'Stage 2: VLM Diagram Analysis (Pass 1)', sub: 'src/pipeline/describe.py',
       sections: [
@@ -229,7 +322,7 @@ const NODES = [
     }
   },
   { id: 'stage2b', label: '2b. Positions', sub: 'Pass 2: Player Extraction', icon: '\u{1F4CD}',
-    x: 440, y: 200, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    x: 440, y: 210, w: 170, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
       title: 'Stage 2b: Position Extraction (Pass 2)', sub: 'src/pipeline/describe.py',
       sections: [
@@ -242,7 +335,7 @@ const NODES = [
     }
   },
   { id: 'stage3', label: '3. Extract', sub: 'Schema Extraction', icon: '\u{1F9E9}',
-    x: 620, y: 200, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    x: 630, y: 210, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
       title: 'Stage 3: Schema Extraction', sub: 'src/pipeline/extract.py',
       sections: [
@@ -255,7 +348,7 @@ const NODES = [
     }
   },
   { id: 'stage4', label: '4. Enrich', sub: 'Tactical Context', icon: '\u{26BD}',
-    x: 800, y: 200, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    x: 810, y: 210, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
       title: 'Stage 4: Tactical Enrichment', sub: 'src/pipeline/validate.py',
       sections: [
@@ -269,7 +362,7 @@ const NODES = [
     }
   },
   { id: 'stage5', label: '5. Store', sub: 'PostgreSQL Persistence', icon: '\u{1F4BE}',
-    x: 800, y: 300, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    x: 810, y: 310, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
       title: 'Stage 5: PostgreSQL Storage', sub: 'src/pipeline/store.py',
       sections: [
@@ -280,34 +373,117 @@ const NODES = [
       tags: [{ text: 'asyncpg', color: 'var(--purple)' }, { text: 'JSONB', color: 'var(--text-dim)' }]
     }
   },
+  { id: 'stage6', label: '6. Index', sub: 'ColPali Visual Indexing', icon: '\u{1F50D}',
+    x: 810, y: 400, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    detail: {
+      title: 'Stage 6: ColPali Visual Indexing', sub: 'Best-effort, non-fatal',
+      sections: [
+        { h: 'Description', p: 'After PostgreSQL storage, the orchestrator POSTs the PDF path to the ColPali service for visual indexing. The ColPali service indexes each page into a FAISS index using byaldi/ColQwen2. This stage is best-effort \u2014 if ColPali is unavailable, ingestion still succeeds.' },
+        { h: 'Request', p: 'POST /index { pdf_path, plan_id, filename } to colpali:8000' },
+        { h: 'Behavior', items: ['Shared upload_data volume \u2014 no file transfer', 'Non-fatal: logs warning on failure', 'Returns indexed=true/false in ingest response'] },
+      ],
+      tags: [{ text: 'Best-Effort', color: 'var(--amber)' }, { text: 'byaldi', color: 'var(--red)' }]
+    }
+  },
+
+  // VLM Service
   { id: 'ollama', label: 'Ollama VLM', sub: ':11434 \u2022 GPU', icon: '\u{1F9E0}',
-    x: 280, y: 320, w: 170, h: 50, layer: 'vlm', fill: '#2a2010', stroke: '#f59e0b',
+    x: 280, y: 330, w: 180, h: 50, layer: 'vlm', fill: '#2a2010', stroke: '#f59e0b',
     detail: {
       title: 'Ollama VLM Service', sub: 'Port 11434 \u2022 GPU Container',
       sections: [
         { h: 'Description', p: 'Runs Qwen3-VL vision-language model with full GPU offloading. Provides OpenAI-compatible /v1/chat/completions endpoint with vision support.' },
         { h: 'Model (Windows)', items: ['qwen3-vl:8b \u2014 Q4_K_M quantization', 'Download: 6.1 GB', 'VRAM: 5.4 GiB model weights + 576 MiB KV cache', '37/37 layers offloaded to CUDA'] },
-        { h: 'Model (DGX)', items: ['qwen3-vl:32b \u2014 larger model for higher accuracy', 'Leverages Blackwell GPU (128 GB)'] },
+        { h: 'Model (DGX)', items: ['qwen3-vl:32b \u2014 larger model for higher accuracy', 'Leverages Blackwell GPU (128 GB unified memory)'] },
         { h: 'API', p: 'POST /v1/chat/completions with base64-encoded images in the messages array. System + user message pattern.' },
       ],
       tags: [{ text: 'Qwen3-VL', color: 'var(--amber)' }, { text: 'CUDA', color: 'var(--red)' }, { text: '37/37 layers', color: 'var(--green)' }]
     }
   },
+
+  // Retrieval
+  { id: 'colpali', label: 'ColPali Service', sub: ':8005 \u2022 GPU \u2022 ColQwen2', icon: '\u{1F9E0}',
+    x: 540, y: 420, w: 210, h: 50, layer: 'retrieval', fill: '#2a1020', stroke: '#ef4444',
+    detail: {
+      title: 'ColPali Visual Retrieval', sub: 'Port 8005 \u2022 GPU Container',
+      sections: [
+        { h: 'Description', p: 'Separate Docker service running ColQwen2 (vidore/colqwen2-v1.0) via byaldi. Provides /index and /search endpoints for visual semantic retrieval. Model loads on startup (~2.5B params, ~5\u20136 GB VRAM).' },
+        { h: 'Endpoints', items: ['POST /index \u2014 Index a PDF into FAISS', 'POST /search \u2014 Text query \u2192 ranked results', 'GET /health \u2014 Health check'] },
+        { h: 'Storage', items: ['FAISS index persisted to colpali_index volume', 'doc_mapping.json maps doc_id \u2192 {plan_id, filename}', 'Model weights cached in colpali_cache volume'] },
+        { h: 'GPU Sharing', p: 'ColQwen2 (~5\u20136 GB) + Qwen3-VL 8B (~5.4 GB) = ~11 GB total. Fits in 16 GB RTX 5070 Ti. VLM inference (stages 2/2b) completes before ColPali indexing (stage 6), providing natural temporal separation.' },
+      ],
+      tags: [{ text: 'ColQwen2', color: 'var(--red)' }, { text: 'FAISS', color: 'var(--amber)' }, { text: '~5-6 GB', color: 'var(--text-dim)' }]
+    }
+  },
+
+  // Storage
   { id: 'postgres', label: 'PostgreSQL + pgvector', sub: ':5434 \u2022 pgvector:pg16', icon: '\u{1F5C3}\u{FE0F}',
-    x: 580, y: 380, w: 200, h: 50, layer: 'storage', fill: '#1f1a30', stroke: '#a855f7',
+    x: 560, y: 330, w: 210, h: 50, layer: 'storage', fill: '#1f1a30', stroke: '#a855f7',
     detail: {
       title: 'PostgreSQL + pgvector', sub: 'Port 5434 \u2022 pgvector/pgvector:pg16',
       sections: [
         { h: 'Description', p: 'Persistent storage for all extracted data. Uses pgvector extension for future vector similarity search. Schema initialized via init-db.sql on first run.' },
         { h: 'Database Schema', items: ['session_plans \u2014 UUID PK, JSONB raw_json, timestamps', 'drill_blocks \u2014 FK to session_plans, TEXT[] arrays for lists', 'tactical_contexts \u2014 FK to drill_blocks, methodology classification'] },
-        { h: 'Extensions', items: ['vector \u2014 pgvector for embedding storage (Phase 3)', 'uuid-ossp \u2014 UUID generation'] },
+        { h: 'Extensions', items: ['vector \u2014 pgvector for embedding storage (Phase 3B+)', 'uuid-ossp \u2014 UUID generation'] },
         { h: 'Connection', p: 'postgresql+asyncpg://soccer_analytics:***@postgres:5432/soccer_analytics' },
       ],
       tags: [{ text: 'pgvector', color: 'var(--purple)' }, { text: 'JSONB', color: 'var(--text-dim)' }, { text: 'asyncpg', color: 'var(--cyan)' }]
     }
   },
+
+  // MCP Tools
+  { id: 'mcp-parse', label: 'parse_session_plan', sub: 'List/get session plans', icon: '\u{1F4CB}',
+    x: 60, y: 440, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
+    detail: {
+      title: 'MCP: parse_session_plan', sub: 'src/mcp/server.py',
+      sections: [
+        { h: 'Description', p: 'Query stored session plans from the database. If plan_id is provided, returns that specific plan. Otherwise lists all stored plans.' },
+        { h: 'Parameters', items: ['plan_id (optional): UUID of a specific session plan'] },
+        { h: 'Returns', p: 'Session plan JSON with title, category, drills, and tactical context.' },
+      ],
+      tags: [{ text: 'MCP', color: 'var(--green)' }, { text: 'stdio', color: 'var(--text-dim)' }]
+    }
+  },
+  { id: 'mcp-analyze', label: 'analyze_tactical_drill', sub: 'Drill analysis + context', icon: '\u{1F3AF}',
+    x: 60, y: 500, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
+    detail: {
+      title: 'MCP: analyze_tactical_drill', sub: 'src/mcp/server.py',
+      sections: [
+        { h: 'Description', p: 'Analyze a specific drill from a session plan with full tactical context: methodology, game element, pitch lanes, situation type.' },
+        { h: 'Parameters', items: ['plan_id (required): UUID of the session plan', 'drill_index (required): Zero-based index of the drill', 'render_diagram (optional): Include a diagram URL'] },
+      ],
+      tags: [{ text: 'MCP', color: 'var(--green)' }, { text: 'Tactical', color: 'var(--cyan)' }]
+    }
+  },
+  { id: 'mcp-render', label: 'render_drill_diagram', sub: 'Pitch diagram PNG/PDF', icon: '\u{1F3A8}',
+    x: 60, y: 560, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
+    detail: {
+      title: 'MCP: render_drill_diagram', sub: 'src/mcp/server.py',
+      sections: [
+        { h: 'Description', p: 'Render a pitch diagram for a drill using extracted player positions. Returns a base64-encoded image (PNG or PDF).' },
+        { h: 'Parameters', items: ['plan_id (required): UUID of the session plan', 'drill_index (required): Zero-based index', 'format (optional): "png" or "pdf" (default: png)'] },
+        { h: 'Rendering', p: 'Uses mplsoccer to draw an Opta pitch with player markers colored by role (attacker=red, defender=blue, goalkeeper=yellow, neutral=gray).' },
+      ],
+      tags: [{ text: 'MCP', color: 'var(--green)' }, { text: 'mplsoccer', color: 'var(--amber)' }]
+    }
+  },
+  { id: 'mcp-search', label: 'search_drills', sub: 'Semantic search via ColPali', icon: '\u{1F50E}',
+    x: 60, y: 620, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
+    detail: {
+      title: 'MCP: search_drills', sub: 'src/mcp/server.py',
+      sections: [
+        { h: 'Description', p: 'Semantic visual search across all indexed coaching PDFs. Uses ColPali/ColQwen2 for text-to-document matching.' },
+        { h: 'Parameters', items: ['query (required): Natural language search text', 'k (optional): Number of results (default 5, max 50)'] },
+        { h: 'Flow', items: ['Calls GET /api/search on orchestrator', 'Orchestrator forwards to ColPali service', 'Results enriched with PostgreSQL metadata'] },
+        { h: 'Error Handling', items: ['503: ColPali not configured', '502: ColPali service unavailable'] },
+      ],
+      tags: [{ text: 'MCP', color: 'var(--green)' }, { text: 'ColPali', color: 'var(--red)' }]
+    }
+  },
+
+  // Docs
   { id: 'swagger', label: 'Swagger UI', sub: ':8084', icon: '\u{1F4D6}',
-    x: 80, y: 380, w: 150, h: 50, layer: 'docs', fill: '#1a1d27', stroke: '#6b7280',
+    x: 60, y: 100, w: 150, h: 44, layer: 'docs', fill: '#1a1d27', stroke: '#6b7280',
     detail: {
       title: 'Swagger UI', sub: 'Port 8084 \u2022 swaggerapi/swagger-ui',
       sections: [
@@ -320,27 +496,49 @@ const NODES = [
 ];
 
 const CONNECTIONS = [
+  // Ingest flow
   { from: 'pdf-upload', to: 'orchestrator', type: 'data', label: 'PDF file' },
   { from: 'orchestrator', to: 'stage1', type: 'data', label: 'Pipeline start' },
-  { from: 'stage1', to: 'stage2', type: 'data', label: 'Markdown + images' },
+  { from: 'stage1', to: 'stage2', type: 'data', label: 'MD + images' },
   { from: 'stage2', to: 'stage2b', type: 'data', label: 'Confirmed diagrams' },
   { from: 'stage2b', to: 'stage3', type: 'data', label: 'Merged descriptions' },
   { from: 'stage3', to: 'stage4', type: 'data', label: 'DrillBlocks' },
   { from: 'stage4', to: 'stage5', type: 'data', label: 'SessionPlan' },
+  { from: 'stage5', to: 'stage6', type: 'data', label: 'plan_id + PDF path' },
+
+  // GPU calls
   { from: 'stage2', to: 'ollama', type: 'gpu', label: 'Base64 images' },
   { from: 'ollama', to: 'stage2', type: 'gpu', label: 'Classification' },
   { from: 'stage2b', to: 'ollama', type: 'gpu', label: 'Diagram images' },
   { from: 'ollama', to: 'stage2b', type: 'gpu', label: 'Positions JSON' },
+  { from: 'stage6', to: 'colpali', type: 'gpu', label: 'POST /index' },
+  { from: 'colpali', to: 'stage6', type: 'gpu', label: 'indexed=true' },
+
+  // Storage
   { from: 'stage5', to: 'postgres', type: 'store', label: 'INSERT/UPSERT' },
-  { from: 'orchestrator', to: 'swagger', type: 'http', label: 'OpenAPI schema' },
   { from: 'orchestrator', to: 'postgres', type: 'store', label: 'Query' },
+
+  // Search flow
+  { from: 'search-query', to: 'orchestrator', type: 'data', label: 'q=...&k=5' },
+  { from: 'orchestrator', to: 'colpali', type: 'gpu', label: 'POST /search' },
+
+  // MCP tools
+  { from: 'mcp-parse', to: 'orchestrator', type: 'http', label: 'GET /api/sessions' },
+  { from: 'mcp-analyze', to: 'orchestrator', type: 'http', label: 'GET /api/sessions/{id}' },
+  { from: 'mcp-render', to: 'orchestrator', type: 'http', label: 'GET /api/sessions/{id}' },
+  { from: 'mcp-search', to: 'orchestrator', type: 'http', label: 'GET /api/search' },
+
+  // Docs
+  { from: 'orchestrator', to: 'swagger', type: 'http', label: 'OpenAPI schema' },
 ];
 
 const PRESETS = {
-  full: { layers: { entry: true, orchestrator: true, pipeline: true, vlm: true, storage: true, docs: true } },
-  pipeline: { layers: { entry: false, orchestrator: false, pipeline: true, vlm: true, storage: false, docs: false } },
-  data: { layers: { entry: false, orchestrator: false, pipeline: true, vlm: false, storage: true, docs: false } },
-  infra: { layers: { entry: true, orchestrator: true, pipeline: false, vlm: true, storage: true, docs: true } },
+  full:     { layers: { entry: true, orchestrator: true, pipeline: true, vlm: true, retrieval: true, storage: true, mcp: true, docs: true } },
+  pipeline: { layers: { entry: true, orchestrator: true, pipeline: true, vlm: true, retrieval: true, storage: false, mcp: false, docs: false } },
+  search:   { layers: { entry: true, orchestrator: true, pipeline: false, vlm: false, retrieval: true, storage: true, mcp: false, docs: false } },
+  data:     { layers: { entry: false, orchestrator: true, pipeline: true, vlm: false, retrieval: false, storage: true, mcp: false, docs: false } },
+  infra:    { layers: { entry: false, orchestrator: true, pipeline: false, vlm: true, retrieval: true, storage: true, mcp: false, docs: true } },
+  mcp:      { layers: { entry: false, orchestrator: true, pipeline: false, vlm: false, retrieval: false, storage: true, mcp: true, docs: false } },
 };
 
 function init() {
@@ -404,6 +602,8 @@ function setPlatform(p) {
 
 function getNode(id) { return NODES.find(n => n.id === id); }
 
+function hasComment(nodeId) { return state.comments.some(c => c.target === nodeId); }
+
 function renderDiagram() {
   const svg = document.getElementById('diagram');
   const visibleNodes = NODES.filter(n => state.layers[n.layer]);
@@ -429,7 +629,7 @@ function renderDiagram() {
     const tx = t.x + t.w/2, ty = t.y + t.h/2;
     const mx = (fx + tx) / 2, my = (fy + ty) / 2;
     const dx = tx - fx, dy = ty - fy;
-    const cx = mx - dy * 0.15, cy = my + dx * 0.15;
+    const cx = mx - dy * 0.12, cy = my + dx * 0.12;
     const dashAttr = ct.dash ? `stroke-dasharray="${ct.dash}"` : '';
     html += `<path d="M${fx},${fy} Q${cx},${cy} ${tx},${ty}" fill="none" stroke="${ct.color}" stroke-width="1.5" opacity="0.5" ${dashAttr} marker-end="url(#arrow-${ct.id})"/>`;
     if (c.label) {
@@ -440,16 +640,21 @@ function renderDiagram() {
   // Nodes
   visibleNodes.forEach(n => {
     const sel = state.selected === n.id;
+    const commented = hasComment(n.id);
     const platSub = n.id === 'ollama'
       ? (state.platform === 'dgx' ? ':11434 \u2022 GPU \u2022 qwen3-vl:32b' : ':11434 \u2022 GPU \u2022 qwen3-vl:8b')
       : n.sub;
+    const strokeW = sel ? 2.5 : (commented ? 2 : 1.2);
     html += `<g class="node ${sel ? 'selected' : ''}" onclick="selectNode('${n.id}')">
       <rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="8"
-        fill="${n.fill}" stroke="${n.stroke}" stroke-width="${sel ? 2.5 : 1.2}"/>
-      <text class="node-icon" x="${n.x + 12}" y="${n.y + 30}">${n.icon}</text>
-      <text class="node-title" x="${n.x + 32}" y="${n.y + 22}">${n.label}</text>
-      <text class="node-sub" x="${n.x + 32}" y="${n.y + 36}">${platSub}</text>
-    </g>`;
+        fill="${n.fill}" stroke="${commented ? 'var(--blue)' : n.stroke}" stroke-width="${strokeW}"/>
+      <text class="node-icon" x="${n.x + 12}" y="${n.y + (n.h > 44 ? 30 : 28)}">${n.icon}</text>
+      <text class="node-title" x="${n.x + 32}" y="${n.y + (n.h > 44 ? 22 : 20)}">${n.label}</text>
+      <text class="node-sub" x="${n.x + 32}" y="${n.y + (n.h > 44 ? 36 : 34)}">${platSub}</text>`;
+    if (commented) {
+      html += `<text class="comment-indicator" x="${n.x + n.w - 16}" y="${n.y + 14}" fill="var(--blue)">\u{1F4AC}</text>`;
+    }
+    html += `</g>`;
   });
 
   html += `</g>`;
@@ -478,9 +683,22 @@ function selectNode(id) {
     }
     html += `</div>`;
   });
+
+  // Existing comment for this node
+  const existing = state.comments.filter(c => c.target === id);
+  if (existing.length > 0) {
+    html += `<div class="detail-section"><h3>Your Comments</h3>`;
+    existing.forEach(c => {
+      html += `<p style="color:var(--blue);font-style:italic">"${c.text}"</p>`;
+    });
+    html += `</div>`;
+  }
+
+  html += `<button class="comment-btn" onclick="openModal('${id}')">Add Comment</button>`;
   document.getElementById('detail-content').innerHTML = html;
   document.getElementById('detail-panel').classList.add('show');
   renderDiagram();
+  updatePrompt();
 }
 
 function closeDetail() {
@@ -489,8 +707,71 @@ function closeDetail() {
   renderDiagram();
 }
 
+function openModal(nodeId) {
+  state.commentTarget = nodeId;
+  const node = getNode(nodeId);
+  document.getElementById('modal-title').textContent = `Comment: ${node.detail.title}`;
+  document.getElementById('modal-sub').textContent = node.detail.sub;
+  document.getElementById('modal-textarea').value = '';
+  document.getElementById('comment-modal').classList.add('show');
+  setTimeout(() => document.getElementById('modal-textarea').focus(), 50);
+}
+
+function closeModal() {
+  document.getElementById('comment-modal').classList.remove('show');
+  state.commentTarget = null;
+}
+
+function saveComment() {
+  const text = document.getElementById('modal-textarea').value.trim();
+  if (!text) { closeModal(); return; }
+  const node = getNode(state.commentTarget);
+  state.comments.push({
+    id: Date.now(),
+    target: state.commentTarget,
+    targetLabel: node.detail.title,
+    targetFile: node.detail.sub,
+    text: text,
+  });
+  closeModal();
+  renderComments();
+  renderDiagram();
+  updatePrompt();
+  // Re-open detail panel to show the new comment
+  if (state.selected === state.commentTarget) {
+    selectNode(state.commentTarget);
+  }
+}
+
+function deleteComment(commentId) {
+  state.comments = state.comments.filter(c => c.id !== commentId);
+  renderComments();
+  renderDiagram();
+  updatePrompt();
+  // Refresh detail panel if open
+  if (state.selected) selectNode(state.selected);
+}
+
+function renderComments() {
+  const el = document.getElementById('comments-list');
+  const countEl = document.getElementById('comment-count');
+  if (state.comments.length === 0) {
+    el.innerHTML = '<div class="no-comments">Click any component, then "Add Comment" to annotate.</div>';
+    countEl.textContent = '';
+    return;
+  }
+  countEl.textContent = `(${state.comments.length})`;
+  el.innerHTML = state.comments.map(c => `
+    <div class="comment-item">
+      <button class="comment-delete" onclick="deleteComment(${c.id})">&times;</button>
+      <div class="comment-target">${c.targetLabel}</div>
+      <div class="comment-text">${c.text}</div>
+    </div>
+  `).join('');
+}
+
 function zoom(delta) {
-  state.scale = Math.max(0.4, Math.min(2, state.scale + delta));
+  state.scale = Math.max(0.3, Math.min(2.5, state.scale + delta));
   renderDiagram();
 }
 function resetZoom() {
@@ -517,6 +798,14 @@ document.getElementById('canvas-area').addEventListener('wheel', e => {
   zoom(e.deltaY > 0 ? -0.05 : 0.05);
 }, { passive: false });
 
+// Close modal on Escape
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (document.getElementById('comment-modal').classList.contains('show')) closeModal();
+    else if (document.getElementById('detail-panel').classList.contains('show')) closeDetail();
+  }
+});
+
 function updatePrompt() {
   const visibleLayers = LAYERS.filter(l => state.layers[l.id]).map(l => l.label);
   const platform = state.platform === 'dgx' ? 'DGX Spark (Blackwell, qwen3-vl:32b)' : 'Windows (RTX 5070 Ti, qwen3-vl:8b)';
@@ -528,7 +817,14 @@ function updatePrompt() {
 
   if (state.selected) {
     const node = getNode(state.selected);
-    if (node) parts.push(`Selected component: ${node.detail.title} (${node.detail.sub}).`);
+    if (node) parts.push(`\nSelected: ${node.detail.title} (${node.detail.sub}).`);
+  }
+
+  if (state.comments.length > 0) {
+    parts.push(`\nFeedback on specific components:\n`);
+    state.comments.forEach(c => {
+      parts.push(`**${c.targetLabel}** (${c.targetFile}):\n${c.text}\n`);
+    });
   }
 
   document.getElementById('prompt-output').textContent = parts.join('\n');

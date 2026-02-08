@@ -39,6 +39,8 @@ volumes:
   ollama_data:
   model_cache:
   upload_data:
+  colpali_index:
+  colpali_cache:
 
 networks:
   soccer-analytics:

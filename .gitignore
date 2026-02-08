@@ -42,6 +42,13 @@ diagram_*.png
 # Docker
 .docker/
 
+# Certificates & secrets
+*.key
+*.pem
+*.crt
+*.p12
+.env.local
+
 # OS
 .DS_Store
 Thumbs.db
