@@ -215,21 +215,34 @@ const NODES = [
       tags: [{ text: 'Docling', color: 'var(--cyan)' }, { text: 'CPU', color: 'var(--blue)' }, { text: 'OCR', color: 'var(--text-dim)' }]
     }
   },
-  { id: 'stage2', label: '2. Describe', sub: 'VLM Diagram Analysis', icon: '\u{1F441}\u{FE0F}',
-    x: 280, y: 200, w: 170, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+  { id: 'stage2', label: '2. Describe', sub: 'Pass 1: Classification', icon: '\u{1F441}\u{FE0F}',
+    x: 260, y: 200, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
-      title: 'Stage 2: VLM Diagram Analysis', sub: 'src/pipeline/describe.py',
+      title: 'Stage 2: VLM Diagram Analysis (Pass 1)', sub: 'src/pipeline/describe.py',
       sections: [
-        { h: 'Description', p: 'Each extracted image is sent to Qwen3-VL via Ollama\'s OpenAI-compatible vision API. The VLM classifies images as tactical diagrams vs non-diagrams (photos, logos) and extracts structured information.' },
-        { h: 'VLM Prompt', items: ['System message enforcing JSON-only output', 'is_diagram classification (true/false)', 'Player positions with x,y coordinates', 'Movement arrows and tactical setup'] },
+        { h: 'Description', p: 'Each extracted image is sent to Qwen3-VL via Ollama\'s OpenAI-compatible vision API. Pass 1 classifies images as tactical diagrams vs non-diagrams (photos, logos) and extracts descriptions, movement arrows, and tactical setup.' },
+        { h: 'VLM Prompt', items: ['System message enforcing JSON-only output', 'is_diagram classification (true/false)', 'Description, movement arrows, tactical setup', 'Equipment list'] },
         { h: 'JSON Extraction', items: ['3-strategy parser: direct \u2192 fence strip \u2192 brace counting', 'Trailing comma fix for malformed JSON', 'Fallback to free-text description'] },
         { h: 'Performance', p: '~15-20 sec per image on GPU. 4 images: ~1 min. 28 images: ~8 min.' },
       ],
-      tags: [{ text: 'Qwen3-VL', color: 'var(--amber)' }, { text: 'GPU', color: 'var(--red)' }, { text: 'Vision', color: 'var(--purple)' }]
+      tags: [{ text: 'Qwen3-VL', color: 'var(--amber)' }, { text: 'GPU', color: 'var(--red)' }, { text: 'Pass 1', color: 'var(--cyan)' }]
+    }
+  },
+  { id: 'stage2b', label: '2b. Positions', sub: 'Pass 2: Player Extraction', icon: '\u{1F4CD}',
+    x: 440, y: 200, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    detail: {
+      title: 'Stage 2b: Position Extraction (Pass 2)', sub: 'src/pipeline/describe.py',
+      sections: [
+        { h: 'Description', p: 'A focused second VLM pass runs only on confirmed diagrams (is_diagram=true). Dedicated to spatial reasoning: extracts player marker positions using Opta coordinates (0\u2013100).' },
+        { h: 'Position Prompt', items: ['Opta coordinate system (x: 0\u2013100, y: 0\u2013100)', 'Label-to-role mapping: A\u2192attacker, D\u2192defender, GK\u2192goalkeeper, N\u2192neutral', 'Two few-shot examples (2v1 drill, 4v3 exercise)', 'Empty case: {"player_positions": []}'] },
+        { h: 'Validation', items: ['Clamp x,y to 0\u2013100 bounds', 'Reject empty/whitespace labels', 'Standardize roles via alias map (gk\u2192goalkeeper, forward\u2192attacker, etc.)', 'Deduplicate by label (first occurrence wins)'] },
+        { h: 'Configuration', items: ['EXTRACT_POSITIONS env var (default: true)', 'max_tokens: 2048, temperature: 0.1', 'Skips non-diagrams (saves API calls)'] },
+      ],
+      tags: [{ text: 'Qwen3-VL', color: 'var(--amber)' }, { text: 'GPU', color: 'var(--red)' }, { text: 'Pass 2', color: 'var(--cyan)' }]
     }
   },
   { id: 'stage3', label: '3. Extract', sub: 'Schema Extraction', icon: '\u{1F9E9}',
-    x: 480, y: 200, w: 170, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    x: 620, y: 200, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
       title: 'Stage 3: Schema Extraction', sub: 'src/pipeline/extract.py',
       sections: [
@@ -242,7 +255,7 @@ const NODES = [
     }
   },
   { id: 'stage4', label: '4. Enrich', sub: 'Tactical Context', icon: '\u{26BD}',
-    x: 680, y: 200, w: 170, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    x: 800, y: 200, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
       title: 'Stage 4: Tactical Enrichment', sub: 'src/pipeline/validate.py',
       sections: [
@@ -256,7 +269,7 @@ const NODES = [
     }
   },
   { id: 'stage5', label: '5. Store', sub: 'PostgreSQL Persistence', icon: '\u{1F4BE}',
-    x: 680, y: 300, w: 170, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    x: 800, y: 300, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
       title: 'Stage 5: PostgreSQL Storage', sub: 'src/pipeline/store.py',
       sections: [
@@ -310,11 +323,14 @@ const CONNECTIONS = [
   { from: 'pdf-upload', to: 'orchestrator', type: 'data', label: 'PDF file' },
   { from: 'orchestrator', to: 'stage1', type: 'data', label: 'Pipeline start' },
   { from: 'stage1', to: 'stage2', type: 'data', label: 'Markdown + images' },
-  { from: 'stage2', to: 'stage3', type: 'data', label: 'VLM descriptions' },
+  { from: 'stage2', to: 'stage2b', type: 'data', label: 'Confirmed diagrams' },
+  { from: 'stage2b', to: 'stage3', type: 'data', label: 'Merged descriptions' },
   { from: 'stage3', to: 'stage4', type: 'data', label: 'DrillBlocks' },
   { from: 'stage4', to: 'stage5', type: 'data', label: 'SessionPlan' },
   { from: 'stage2', to: 'ollama', type: 'gpu', label: 'Base64 images' },
-  { from: 'ollama', to: 'stage2', type: 'gpu', label: 'JSON analysis' },
+  { from: 'ollama', to: 'stage2', type: 'gpu', label: 'Classification' },
+  { from: 'stage2b', to: 'ollama', type: 'gpu', label: 'Diagram images' },
+  { from: 'ollama', to: 'stage2b', type: 'gpu', label: 'Positions JSON' },
   { from: 'stage5', to: 'postgres', type: 'store', label: 'INSERT/UPSERT' },
   { from: 'orchestrator', to: 'swagger', type: 'http', label: 'OpenAPI schema' },
   { from: 'orchestrator', to: 'postgres', type: 'store', label: 'Query' },

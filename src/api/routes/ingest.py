@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.config import settings
 from src.api.deps import get_db
 from src.pipeline.decompose import decompose_pdf
-from src.pipeline.describe import describe_diagrams
+from src.pipeline.describe import describe_diagrams, extract_all_positions
 from src.pipeline.extract import extract_session_plan
 from src.pipeline.validate import validate_and_enrich
 from src.pipeline.store import store_session_plan
@@ -72,6 +72,18 @@ async def ingest_pdf(
             ollama_url=settings.ollama_url,
             model=settings.vlm_model,
         )
+
+        # Stage 2b: Focused position extraction (second VLM pass)
+        if settings.extract_positions:
+            position_data = await extract_all_positions(
+                images=document.images,
+                diagram_descriptions=diagram_descriptions,
+                ollama_url=settings.ollama_url,
+                model=settings.vlm_model,
+            )
+            for key, positions in position_data.items():
+                if key in diagram_descriptions and positions:
+                    diagram_descriptions[key]["player_positions"] = positions
 
         # Stage 3: Extract structured data
         session_plan = await extract_session_plan(

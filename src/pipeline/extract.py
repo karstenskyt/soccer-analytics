@@ -97,15 +97,23 @@ def _classify_subsection(header_text: str) -> str:
 
 
 def _parse_player_positions(positions_data: list[dict]) -> list[PlayerPosition]:
-    """Convert VLM position data to PlayerPosition models."""
+    """Convert VLM position data to PlayerPosition models.
+
+    Applies defensive clamping: x,y clamped to 0-100, empty labels skipped.
+    """
     result = []
     for pos in positions_data:
         try:
+            x = max(0.0, min(100.0, float(pos.get("x", 50))))
+            y = max(0.0, min(100.0, float(pos.get("y", 50))))
+            label = str(pos.get("label", "Unknown")).strip()
+            if not label:
+                continue
             result.append(
                 PlayerPosition(
-                    label=str(pos.get("label", "Unknown")),
-                    x=float(pos.get("x", 50)),
-                    y=float(pos.get("y", 50)),
+                    label=label,
+                    x=x,
+                    y=y,
                     role=pos.get("role"),
                 )
             )

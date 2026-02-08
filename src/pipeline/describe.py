@@ -10,6 +10,26 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# --- Role alias map for position standardization ---
+_ROLE_ALIASES: dict[str, str] = {
+    "gk": "goalkeeper",
+    "goalie": "goalkeeper",
+    "keeper": "goalkeeper",
+    "forward": "attacker",
+    "fwd": "attacker",
+    "striker": "attacker",
+    "att": "attacker",
+    "back": "defender",
+    "def": "defender",
+    "cb": "defender",
+    "fb": "defender",
+    "mid": "midfielder",
+    "mf": "midfielder",
+    "neutral": "neutral",
+}
+
+# --- Pass 1 prompts (UNCHANGED) ---
+
 # System message that enforces structured JSON output
 VLM_SYSTEM_PROMPT = (
     "You are a soccer coaching diagram analyzer. You MUST respond with a "
@@ -186,6 +206,202 @@ async def describe_single_diagram(
         "equipment": [],
         "tactical_setup": "",
     }
+
+
+# --- Pass 2 prompts: Focused position extraction ---
+
+POSITION_EXTRACTION_SYSTEM_PROMPT = (
+    "You are a soccer coaching diagram position extractor. You MUST respond "
+    "with a single valid JSON object and nothing else. No markdown, no "
+    "explanation, no text before or after the JSON."
+)
+
+POSITION_EXTRACTION_PROMPT = """Look at this soccer coaching diagram and extract the positions of ALL player markers.
+
+Use the Opta coordinate system:
+- x: 0 (left) to 100 (right)
+- y: 0 (bottom/own goal) to 100 (top/opponent goal)
+
+Player markers include: circles, dots, filled/unfilled shapes, or labels like A1, D2, GK, N1.
+
+Label-to-role mapping:
+- A, A1, A2... = "attacker"
+- D, D1, D2... = "defender"
+- GK = "goalkeeper"
+- N, N1... = "neutral"
+- Numbered only (1, 2, 3) = use position context or null
+
+Example 1 (2v1 drill):
+{"player_positions": [{"label": "A1", "x": 30, "y": 60, "role": "attacker"}, {"label": "A2", "x": 50, "y": 55, "role": "attacker"}, {"label": "D1", "x": 40, "y": 70, "role": "defender"}]}
+
+Example 2 (4v3 exercise):
+{"player_positions": [{"label": "GK", "x": 50, "y": 5, "role": "goalkeeper"}, {"label": "A1", "x": 25, "y": 45, "role": "attacker"}, {"label": "A2", "x": 50, "y": 50, "role": "attacker"}, {"label": "A3", "x": 75, "y": 45, "role": "attacker"}, {"label": "A4", "x": 50, "y": 35, "role": "attacker"}, {"label": "D1", "x": 35, "y": 60, "role": "defender"}, {"label": "D2", "x": 50, "y": 65, "role": "defender"}, {"label": "D3", "x": 65, "y": 60, "role": "defender"}]}
+
+If no player markers are visible, respond: {"player_positions": []}
+
+Output ONLY the JSON object."""
+
+
+def _validate_positions(raw_positions: list[dict]) -> list[dict]:
+    """Validate and clean extracted player positions.
+
+    - Clamp x, y to 0-100
+    - Reject empty/whitespace labels
+    - Standardize roles via alias map
+    - Deduplicate by label (first occurrence wins)
+    """
+    seen_labels: set[str] = set()
+    validated: list[dict] = []
+
+    for pos in raw_positions:
+        # Clamp coordinates
+        try:
+            x = max(0.0, min(100.0, float(pos.get("x", 50))))
+            y = max(0.0, min(100.0, float(pos.get("y", 50))))
+        except (ValueError, TypeError):
+            continue
+
+        # Validate label
+        label = str(pos.get("label", "")).strip()
+        if not label:
+            continue
+
+        # Deduplicate
+        if label in seen_labels:
+            continue
+        seen_labels.add(label)
+
+        # Standardize role
+        role = pos.get("role")
+        if role is not None:
+            role = str(role).strip().lower()
+            role = _ROLE_ALIASES.get(role, role)
+            # Only keep known roles
+            if role not in (
+                "goalkeeper", "attacker", "defender", "midfielder", "neutral",
+            ):
+                role = None
+
+        validated.append({
+            "label": label,
+            "x": x,
+            "y": y,
+            "role": role,
+        })
+
+    return validated
+
+
+async def extract_positions_from_diagram(
+    image_path: Path,
+    ollama_url: str,
+    model: str,
+) -> list[dict]:
+    """Send a diagram image to VLM for focused position extraction (Pass 2).
+
+    Returns a list of validated position dicts, or [] on any failure.
+    """
+    try:
+        image_bytes = image_path.read_bytes()
+        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+        payload = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": POSITION_EXTRACTION_SYSTEM_PROMPT,
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image_b64}"
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": POSITION_EXTRACTION_PROMPT,
+                        },
+                    ],
+                },
+            ],
+            "temperature": 0.1,
+            "max_tokens": 2048,
+        }
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{ollama_url}/v1/chat/completions",
+                json=payload,
+            )
+            response.raise_for_status()
+            result = response.json()
+
+        content = result["choices"][0]["message"]["content"]
+        parsed = _extract_json_from_text(content)
+
+        if parsed is None:
+            logger.warning(
+                f"Pass 2: Could not parse JSON for {image_path.name}"
+            )
+            return []
+
+        raw_positions = parsed.get("player_positions", [])
+        if not isinstance(raw_positions, list):
+            logger.warning(
+                f"Pass 2: player_positions is not a list for {image_path.name}"
+            )
+            return []
+
+        validated = _validate_positions(raw_positions)
+        logger.info(
+            f"Pass 2: Extracted {len(validated)} positions from {image_path.name}"
+        )
+        return validated
+
+    except Exception as e:
+        logger.error(f"Pass 2: Failed for {image_path.name}: {e}")
+        return []
+
+
+async def extract_all_positions(
+    images: dict[str, Path],
+    diagram_descriptions: dict[str, dict],
+    ollama_url: str,
+    model: str,
+) -> dict[str, list[dict]]:
+    """Run focused position extraction on all confirmed diagrams.
+
+    Only processes images where is_diagram=True in diagram_descriptions.
+
+    Returns dict of image_key -> list of validated position dicts.
+    """
+    results: dict[str, list[dict]] = {}
+    diagram_count = 0
+    positions_found = 0
+
+    for key, image_path in images.items():
+        desc = diagram_descriptions.get(key, {})
+        if not desc.get("is_diagram", False):
+            continue
+
+        diagram_count += 1
+        logger.info(f"Pass 2: Extracting positions from {key}")
+        positions = await extract_positions_from_diagram(
+            image_path, ollama_url, model
+        )
+        if positions:
+            results[key] = positions
+            positions_found += len(positions)
+
+    logger.info(
+        f"Pass 2 complete: {diagram_count} diagrams processed, "
+        f"{len(results)} yielded positions ({positions_found} total players)"
+    )
+    return results
 
 
 async def describe_diagrams(

@@ -49,8 +49,11 @@ PDF Upload ──> FastAPI Orchestrator (:8004)
                   ├─ Stage 1: Docling PDF Decomposition (CPU)
                   │     └─ Markdown text + extracted diagram images
                   │
-                  ├─ Stage 2: VLM Diagram Analysis
+                  ├─ Stage 2: VLM Diagram Analysis (Pass 1)
                   │     └─ Qwen3-VL via Ollama (:11434, GPU)
+                  │
+                  ├─ Stage 2b: Position Extraction (Pass 2)
+                  │     └─ Focused VLM pass on confirmed diagrams
                   │
                   ├─ Stage 3: Schema Extraction
                   │     └─ Regex + header grouping → Pydantic models
@@ -163,9 +166,11 @@ Pitch diagrams are rendered using [mplsoccer](https://mplsoccer.readthedocs.io/)
 
 [Docling](https://github.com/DS4SD/docling) `DocumentConverter` extracts markdown text and diagram images from the PDF. OCR is enabled for scanned documents. Images are saved as PNG at 2x resolution.
 
-### Stage 2: VLM Diagram Analysis
+### Stage 2: VLM Diagram Analysis (Two-Pass)
 
-Each extracted image is sent to [Qwen3-VL](https://huggingface.co/Qwen/Qwen3-VL-8B) (8B) running on Ollama via the OpenAI-compatible vision API. The VLM classifies images as tactical diagrams or non-diagrams (photos, logos) and extracts player positions, movement patterns, and tactical setup descriptions as structured JSON.
+**Pass 1 — Classification & Description:** Each extracted image is sent to [Qwen3-VL](https://huggingface.co/Qwen/Qwen3-VL-8B) (8B) running on Ollama via the OpenAI-compatible vision API. The VLM classifies images as tactical diagrams or non-diagrams (photos, logos) and extracts movement patterns and tactical setup descriptions as structured JSON.
+
+**Pass 2 — Position Extraction (Stage 2b):** A second, focused VLM pass runs only on confirmed diagrams (`is_diagram=true`) to extract player positions. The dedicated prompt uses Opta coordinates (0–100), few-shot examples, and label-to-role mapping (A→attacker, D→defender, GK→goalkeeper, N→neutral). Positions are validated (clamped to bounds, deduplicated, roles standardized) and merged into diagram descriptions before Stage 3. Configurable via `EXTRACT_POSITIONS` env var (default: `true`).
 
 ### Stage 3: Schema Extraction
 
@@ -235,6 +240,7 @@ tactical_contexts
 | `POSTGRES_PASSWORD` | `changeme_soccer_2026` | Database password |
 | `POSTGRES_DB` | `soccer_analytics` | Database name |
 | `MAX_UPLOAD_SIZE_MB` | `50` | Max PDF upload size |
+| `EXTRACT_POSITIONS` | `true` | Enable Pass 2 position extraction |
 | `EXTRACTION_TIMEOUT_SECONDS` | `300` | Pipeline timeout |
 
 ### Platform Profiles
@@ -285,7 +291,7 @@ soccer-analytics/
 │   │   └── server.py               # MCP stdio server (3 tools)
 │   ├── pipeline/
 │   │   ├── decompose.py            # Stage 1: Docling PDF decomposition
-│   │   ├── describe.py             # Stage 2: VLM diagram analysis
+│   │   ├── describe.py             # Stage 2 + 2b: VLM diagram analysis & position extraction
 │   │   ├── extract.py              # Stage 3: Schema extraction
 │   │   ├── validate.py             # Stage 4: Tactical enrichment
 │   │   └── store.py                # Stage 5: PostgreSQL storage
@@ -331,6 +337,7 @@ docker compose -f docker-compose.yml -f docker-compose.windows.yml down -v
 - **Phase 1** (Complete): Foundation MVP - PDF ingestion, VLM analysis, PostgreSQL storage
 - **Phase 1.5** (Complete): Extraction quality - drill grouping, metadata parsing, VLM classification
 - **Phase 2** (Complete): MCP server interface, mplsoccer pitch diagram rendering
+- **Phase 2.5** (Complete): Two-pass VLM position extraction for improved player position yield
 - **Phase 3** (Planned): DGX deployment, ColPali visual retrieval, session plan regeneration
 
 ## License

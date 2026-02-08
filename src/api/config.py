@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     ollama_url: str = "http://ollama:11434"
     vlm_model: str = "qwen3-vl:8b"
 
+    # Position extraction (Pass 2)
+    extract_positions: bool = True
+
     # Processing
     max_upload_size_mb: int = 50
     extraction_timeout_seconds: int = 300
