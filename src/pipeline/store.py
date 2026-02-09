@@ -1,11 +1,17 @@
 """Stage 5: Store session plans in PostgreSQL."""
 
+from __future__ import annotations
+
 import json
 import logging
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+if TYPE_CHECKING:
+    from src.schemas.session_plan import DrillBlock
 
 from src.schemas.session_plan import SessionPlan
 
@@ -14,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 async def _insert_drill_blocks(
     plan_id: UUID,
-    drills: list,
+    drills: list["DrillBlock"],
     db: AsyncSession,
 ) -> None:
     """Insert drill blocks and their tactical contexts for a session plan.
@@ -240,17 +246,3 @@ async def list_session_plans(
     ]
 
 
-async def update_session_plan(
-    plan_id: UUID, data: dict, db: AsyncSession
-) -> bool:
-    """Update a session plan's raw JSON."""
-    result = await db.execute(
-        text("""
-            UPDATE session_plans
-            SET raw_json = :raw_json, updated_at = NOW()
-            WHERE id = :id
-        """),
-        {"id": str(plan_id), "raw_json": json.dumps(data)},
-    )
-    await db.commit()
-    return result.rowcount > 0

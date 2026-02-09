@@ -154,7 +154,7 @@
 <div class="layout">
   <div class="sidebar">
     <h1>Soccer Analytics</h1>
-    <div class="subtitle">Architecture Explorer v0.3.0</div>
+    <div class="subtitle">Architecture Explorer v0.5.0</div>
 
     <h2>Platform</h2>
     <div class="platform-toggle">
@@ -326,27 +326,28 @@ const NODES = [
   { id: 'stage2', label: '2. Describe', sub: 'Pass 1: Classification', icon: '\u{1F441}\u{FE0F}',
     x: 260, y: 210, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
-      title: 'Stage 2: VLM Diagram Analysis (Pass 1)', sub: 'src/pipeline/describe.py',
+      title: 'Stage 2: VLM Diagram Classification (Pass 1)', sub: 'src/pipeline/describe.py',
       sections: [
-        { h: 'Description', p: 'Each extracted image is sent to Qwen3-VL via Ollama\'s OpenAI-compatible vision API. Pass 1 classifies images as tactical diagrams vs non-diagrams (photos, logos) and extracts descriptions, movement arrows, and tactical setup.' },
-        { h: 'VLM Prompt', items: ['System message enforcing JSON-only output', 'is_diagram classification (true/false)', 'Description, movement arrows, tactical setup', 'Equipment list'] },
-        { h: 'JSON Extraction', items: ['3-strategy parser: direct \u2192 fence strip \u2192 brace counting', 'Trailing comma fix for malformed JSON', 'Fallback to free-text description'] },
-        { h: 'Performance', p: '~15-20 sec per image on GPU. 4 images: ~1 min. 28 images: ~8 min.' },
+        { h: 'Description', p: 'Each extracted image is sent to Qwen3-VL via Ollama\'s native /api/chat endpoint (with think:false, json_mode). Pass 1 is lightweight: classifies images as tactical diagrams vs non-diagrams (photos, logos) and extracts a brief description.' },
+        { h: 'VLM Prompt', items: ['System message enforcing JSON-only output (no <think> tags)', 'is_diagram classification (true/false)', 'Brief description of the image content', 'json_mode=true for reliable structured output'] },
+        { h: 'JSON Extraction', items: ['<think> tag stripping (closed and unclosed)', '4-strategy parser: think-strip \u2192 direct \u2192 fence strip \u2192 brace counting', 'Trailing comma fix for malformed JSON', 'Retry with no-think prompt on failure'] },
+        { h: 'Performance', p: '~2 sec per image on GPU (60x faster after Ollama native API migration).' },
       ],
       tags: [{ text: 'Qwen3-VL', color: 'var(--amber)' }, { text: 'GPU', color: 'var(--red)' }, { text: 'Pass 1', color: 'var(--cyan)' }]
     }
   },
-  { id: 'stage2b', label: '2b. Positions', sub: 'Pass 2: Player Extraction', icon: '\u{1F4CD}',
+  { id: 'stage2b', label: '2b. Extract', sub: 'Pass 2+3: Full Structure', icon: '\u{1F4CD}',
     x: 440, y: 210, w: 170, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
-      title: 'Stage 2b: Position Extraction (Pass 2)', sub: 'src/pipeline/describe.py',
+      title: 'Stage 2b: Full Structured Extraction (Pass 2+3)', sub: 'src/pipeline/describe.py',
       sections: [
-        { h: 'Description', p: 'A focused second VLM pass runs only on confirmed diagrams (is_diagram=true). Dedicated to spatial reasoning: extracts player marker positions using Opta coordinates (0\u2013100).' },
-        { h: 'Position Prompt', items: ['Opta coordinate system (x: 0\u2013100, y: 0\u2013100)', 'Label-to-role mapping: A\u2192attacker, D\u2192defender, GK\u2192goalkeeper, N\u2192neutral', 'Two few-shot examples (2v1 drill, 4v3 exercise)', 'Empty case: {"player_positions": []}'] },
-        { h: 'Validation', items: ['Clamp x,y to 0\u2013100 bounds', 'Reject empty/whitespace labels', 'Standardize roles via alias map (gk\u2192goalkeeper, forward\u2192attacker, etc.)', 'Deduplicate by label (first occurrence wins)'] },
-        { h: 'Configuration', items: ['EXTRACT_POSITIONS env var (default: true)', 'max_tokens: 2048, temperature: 0.1', 'Skips non-diagrams (saves API calls)'] },
+        { h: 'Description', p: 'Comprehensive VLM pass on confirmed diagrams (is_diagram=true). Extracts ALL diagram elements: player positions, movement arrows, equipment, goals, balls, pitch zones, and pitch view type. Pass 3 conditionally retries if players found but arrows/equipment missing.' },
+        { h: 'Extraction Prompt', items: ['Opta coordinate system (x: 0\u2013100, y: 0\u2013100)', 'Label-to-role mapping: A\u2192attacker, D\u2192defender, GK\u2192goalkeeper, N\u2192neutral', 'Arrow types: run, pass, shot, dribble, cross, through_ball, movement', 'Equipment: cone, mannequin, pole, gate, hurdle, mini_goal, full_goal, flag', 'Compact inline example format (no verbose few-shot to save thinking tokens)'] },
+        { h: 'Validation', items: ['Clamp all coordinates to 0\u2013100 bounds', 'Reject empty/whitespace labels', 'Standardize roles via alias map', 'Deduplicate players by label', 'Fallback arrow/equipment types for unknown values'] },
+        { h: 'Key Technical Note', p: 'Qwen3-VL think:false does NOT disable thinking. Simplified prompt keeps thinking ~4K tokens, leaving room for ~1.5K content within the 8192 num_predict budget.' },
+        { h: 'Configuration', items: ['EXTRACT_POSITIONS env var (default: true)', 'max_tokens: 8192, temperature: 0.1', 'Pass 3 only fires if sparse result (players but no arrows/equipment)'] },
       ],
-      tags: [{ text: 'Qwen3-VL', color: 'var(--amber)' }, { text: 'GPU', color: 'var(--red)' }, { text: 'Pass 2', color: 'var(--cyan)' }]
+      tags: [{ text: 'Qwen3-VL', color: 'var(--amber)' }, { text: 'GPU', color: 'var(--red)' }, { text: 'Pass 2+3', color: 'var(--cyan)' }]
     }
   },
   { id: 'stage3', label: '3. Extract', sub: 'Schema Extraction', icon: '\u{1F9E9}',
@@ -408,10 +409,11 @@ const NODES = [
     detail: {
       title: 'Ollama VLM Service', sub: 'Port 11434 \u2022 GPU Container',
       sections: [
-        { h: 'Description', p: 'Runs Qwen3-VL vision-language model with full GPU offloading. Provides OpenAI-compatible /v1/chat/completions endpoint with vision support.' },
-        { h: 'Model (Windows)', items: ['qwen3-vl:8b \u2014 Q4_K_M quantization', 'Download: 6.1 GB', 'VRAM: 5.4 GiB model weights + 576 MiB KV cache', '37/37 layers offloaded to CUDA'] },
+        { h: 'Description', p: 'Runs Qwen3-VL vision-language model with full GPU offloading. Uses native Ollama /api/chat endpoint with think:false and configurable json_mode.' },
+        { h: 'Model (Windows)', items: ['qwen3-vl:8b \u2014 Q4_K_M quantization', 'Download: 6.1 GB', 'VRAM: ~6 GB (model weights + KV cache)', '37/37 layers offloaded to CUDA'] },
         { h: 'Model (DGX)', items: ['qwen3-vl:32b \u2014 larger model for higher accuracy', 'Leverages Blackwell GPU (128 GB unified memory)'] },
-        { h: 'API', p: 'POST /v1/chat/completions with base64-encoded images in the messages array. System + user message pattern.' },
+        { h: 'API', p: 'POST /api/chat with base64-encoded images in the messages array. Uses think:false, stream:false, and optional format:json for classification pass.' },
+        { h: 'Important Caveat', p: 'think:false does NOT disable thinking for Qwen3-VL. The model still generates thinking tokens internally. The num_predict budget is shared between thinking and content tokens. Keep prompts concise.' },
       ],
       tags: [{ text: 'Qwen3-VL', color: 'var(--amber)' }, { text: 'CUDA', color: 'var(--red)' }, { text: '37/37 layers', color: 'var(--green)' }]
     }
@@ -426,7 +428,7 @@ const NODES = [
         { h: 'Description', p: 'Separate Docker service running ColQwen2 (vidore/colqwen2-v1.0) via byaldi. Provides /index and /search endpoints for visual semantic retrieval. Model loads on startup (~2.5B params, ~5\u20136 GB VRAM).' },
         { h: 'Endpoints', items: ['POST /index \u2014 Index a PDF into FAISS', 'POST /search \u2014 Text query \u2192 ranked results', 'GET /health \u2014 Health check'] },
         { h: 'Storage', items: ['FAISS index persisted to colpali_index volume', 'doc_mapping.json maps doc_id \u2192 {plan_id, filename}', 'Model weights cached in colpali_cache volume'] },
-        { h: 'GPU Sharing', p: 'ColQwen2 (~5\u20136 GB) + Qwen3-VL 8B (~5.4 GB) = ~11 GB total. Fits in 16 GB RTX 5070 Ti. VLM inference (stages 2/2b) completes before ColPali indexing (stage 6), providing natural temporal separation.' },
+        { h: 'GPU Sharing', p: 'ColQwen2 (~5\u20136 GB) + Qwen3-VL 8B (~6 GB) = ~11 GB total. Fits in 16 GB RTX 5070 Ti. VLM inference (stages 2/2b) completes before ColPali indexing (stage 6), providing natural temporal separation.' },
       ],
       tags: [{ text: 'ColQwen2', color: 'var(--red)' }, { text: 'FAISS', color: 'var(--amber)' }, { text: '~5-6 GB', color: 'var(--text-dim)' }]
     }
@@ -453,8 +455,9 @@ const NODES = [
     detail: {
       title: 'Pitch Diagram Renderer', sub: 'src/rendering/pitch.py',
       sections: [
-        { h: 'Description', p: 'Renders soccer pitch diagrams using mplsoccer with Opta-style coordinates (0\u2013100). Player markers are color-coded by role.' },
+        { h: 'Description', p: 'Renders soccer pitch diagrams using mplsoccer with Opta-style coordinates (0\u2013100). Supports enriched elements: players, movement arrows, equipment, goals, balls, and zones.' },
         { h: 'Player Colors', items: ['Goalkeeper: Amber (#F9A825)', 'Attacker: Blue (#1565C0)', 'Defender: Red (#C62828)', 'Neutral: Gray (#757575)'] },
+        { h: 'Enriched Elements', items: ['Movement arrows: run (solid), pass (dashed), shot (thick), dribble (dash-dot)', 'Equipment: cones, mannequins, poles, gates, hurdles', 'Goals, balls, pitch zones with semi-transparent fills', 'Auto-generated legend for arrow types'] },
         { h: 'Output Formats', items: ['PNG: Raster image for embedding', 'PDF: Vector format for printing'] },
         { h: 'API', p: 'render_drill_diagram(drill, format) \u2192 bytes' },
       ],
@@ -567,7 +570,7 @@ const CONNECTIONS = [
   { from: 'stage2', to: 'ollama', type: 'gpu', label: 'Base64 images' },
   { from: 'ollama', to: 'stage2', type: 'gpu', label: 'Classification' },
   { from: 'stage2b', to: 'ollama', type: 'gpu', label: 'Diagram images' },
-  { from: 'ollama', to: 'stage2b', type: 'gpu', label: 'Positions JSON' },
+  { from: 'ollama', to: 'stage2b', type: 'gpu', label: 'Structure JSON' },
   { from: 'stage6', to: 'colpali', type: 'gpu', label: 'POST /index' },
   { from: 'colpali', to: 'stage6', type: 'gpu', label: 'indexed=true' },
 

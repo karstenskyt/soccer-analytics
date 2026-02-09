@@ -5,6 +5,15 @@ from src.schemas.session_plan import (
     DiagramInfo,
     DrillBlock,
     PlayerPosition,
+    MovementArrow,
+    ArrowType,
+    EquipmentObject,
+    EquipmentType,
+    GoalInfo,
+    BallPosition,
+    PitchZone,
+    PitchView,
+    PitchViewType,
 )
 
 
@@ -12,6 +21,48 @@ def _make_drill(positions: list[PlayerPosition] | None = None) -> DrillBlock:
     """Create a DrillBlock with optional player positions."""
     diagram = DiagramInfo(player_positions=positions or [])
     return DrillBlock(name="Test Drill", diagram=diagram)
+
+
+def _make_enriched_drill() -> DrillBlock:
+    """Create a DrillBlock with full enriched diagram data."""
+    diagram = DiagramInfo(
+        vlm_description="2v1 frontal attack drill",
+        player_positions=[
+            PlayerPosition(label="A1", x=30, y=55, role="attacker"),
+            PlayerPosition(label="A2", x=50, y=50, role="attacker"),
+            PlayerPosition(label="D1", x=40, y=70, role="defender"),
+            PlayerPosition(label="GK", x=50, y=95, role="goalkeeper"),
+        ],
+        pitch_view=PitchView(view_type=PitchViewType.HALF_PITCH),
+        arrows=[
+            MovementArrow(
+                start_x=30, start_y=55, end_x=45, end_y=75,
+                arrow_type=ArrowType.RUN, from_label="A1", sequence_number=1,
+            ),
+            MovementArrow(
+                start_x=50, start_y=50, end_x=55, end_y=80,
+                arrow_type=ArrowType.PASS, from_label="A2", to_label="A1",
+                sequence_number=2,
+            ),
+        ],
+        equipment=[
+            EquipmentObject(equipment_type=EquipmentType.CONE, x=25, y=45),
+            EquipmentObject(equipment_type=EquipmentType.CONE, x=55, y=45),
+            EquipmentObject(
+                equipment_type=EquipmentType.GATE,
+                x=20, y=50, x2=20, y2=60, label="Gate 1",
+            ),
+        ],
+        goals=[GoalInfo(x=50, y=100, goal_type="full_goal")],
+        balls=[BallPosition(x=50, y=50)],
+        zones=[
+            PitchZone(
+                zone_type="area", x1=20, y1=40, x2=80, y2=70,
+                label="playing zone",
+            ),
+        ],
+    )
+    return DrillBlock(name="Enriched Drill", diagram=diagram)
 
 
 def _is_png(data: bytes) -> bool:
@@ -66,3 +117,62 @@ def test_role_colors_case_insensitive():
     assert _color_for_role("Goalkeeper") == "#F9A825"
     assert _color_for_role("ATTACKER") == "#1565C0"
     assert _color_for_role("  Defender  ") == "#C62828"
+
+
+# --- Enriched rendering tests ---
+
+
+def test_enriched_drill_renders_valid_png():
+    """A fully enriched drill should render without errors."""
+    result = render_drill_diagram(_make_enriched_drill())
+    assert _is_png(result)
+    assert len(result) > 5000  # Should be larger due to extra elements
+
+
+def test_enriched_drill_renders_pdf():
+    """Enriched drill should also render to PDF."""
+    result = render_drill_diagram(_make_enriched_drill(), fmt="pdf")
+    assert _is_pdf(result)
+
+
+def test_drill_with_only_arrows():
+    """Arrows without other enriched elements should render fine."""
+    diagram = DiagramInfo(
+        arrows=[
+            MovementArrow(
+                start_x=20, start_y=30, end_x=60, end_y=70,
+                arrow_type=ArrowType.SHOT,
+            ),
+        ],
+    )
+    drill = DrillBlock(name="Arrow Only", diagram=diagram)
+    result = render_drill_diagram(drill)
+    assert _is_png(result)
+
+
+def test_drill_with_only_equipment():
+    """Equipment without other enriched elements should render fine."""
+    diagram = DiagramInfo(
+        equipment=[
+            EquipmentObject(equipment_type=EquipmentType.MANNEQUIN, x=50, y=50),
+            EquipmentObject(equipment_type=EquipmentType.POLE, x=30, y=60),
+        ],
+    )
+    drill = DrillBlock(name="Equipment Only", diagram=diagram)
+    result = render_drill_diagram(drill)
+    assert _is_png(result)
+
+
+def test_drill_with_zones_and_balls():
+    """Zones and balls should render without errors."""
+    diagram = DiagramInfo(
+        zones=[
+            PitchZone(zone_type="box", x1=30, y1=60, x2=70, y2=90),
+        ],
+        balls=[
+            BallPosition(x=50, y=50, label="B"),
+        ],
+    )
+    drill = DrillBlock(name="Zones and Balls", diagram=diagram)
+    result = render_drill_diagram(drill)
+    assert _is_png(result)

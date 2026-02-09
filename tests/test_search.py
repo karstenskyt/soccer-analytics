@@ -9,26 +9,7 @@ import pytest
 # Set DATABASE_URL so Settings() can instantiate during import
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-# Build proper FastAPI mocks before importing the search route
-_fastapi_mock = MagicMock()
-
-
-class _FakeHTTPException(Exception):
-    """Stand-in for FastAPI's HTTPException."""
-
-    def __init__(self, status_code, detail=""):
-        self.status_code = status_code
-        self.detail = detail
-        super().__init__(f"{status_code}: {detail}")
-
-
-# Wire up the mock so `from fastapi import HTTPException` returns our class
-_fastapi_mock.HTTPException = _FakeHTTPException
-_fastapi_mock.APIRouter.return_value = MagicMock(get=lambda *a, **kw: lambda fn: fn)
-_fastapi_mock.Depends = lambda x: None
-_fastapi_mock.Query = lambda *a, **kw: None
-
-# Mock Docker-only modules before importing search route
+# Mock Docker-only modules before importing the search route
 _DOCKER_ONLY_MODULES = [
     "docling",
     "docling.document_converter",
@@ -38,25 +19,14 @@ _DOCKER_ONLY_MODULES = [
     "docling_core",
     "docling_core.types",
     "docling_core.types.doc",
-    "sqlalchemy",
-    "sqlalchemy.ext",
-    "sqlalchemy.ext.asyncio",
-    "sqlalchemy.ext.asyncio.session",
-    "sqlalchemy.ext.asyncio.engine",
-    "asyncpg",
-    "mplsoccer",
-    "matplotlib",
-    "matplotlib.pyplot",
-    "matplotlib.figure",
 ]
 for mod in _DOCKER_ONLY_MODULES:
     if mod not in sys.modules:
         sys.modules[mod] = MagicMock()
 
-# Set fastapi mock BEFORE any import of the search module
-sys.modules["fastapi"] = _fastapi_mock
-
 import httpx
+
+from src.api.routes.search import search_drills
 
 
 def _mock_colpali_response(
@@ -75,10 +45,6 @@ def _mock_colpali_response(
     else:
         mock.raise_for_status.return_value = None
     return mock
-
-
-# Import the actual search function (uses our mocked fastapi)
-from src.api.routes.search import search_drills
 
 
 @pytest.mark.asyncio
@@ -134,9 +100,11 @@ async def test_search_happy_path():
 @pytest.mark.asyncio
 async def test_search_returns_503_when_not_configured():
     """Search should raise HTTPException 503 when ColPali not configured."""
+    from fastapi import HTTPException
+
     mock_db = AsyncMock()
 
-    with pytest.raises(_FakeHTTPException) as exc_info:
+    with pytest.raises(HTTPException) as exc_info:
         await search_drills(q="pressing", k=5, db=mock_db, colpali_client=None)
 
     assert exc_info.value.status_code == 503
@@ -146,11 +114,13 @@ async def test_search_returns_503_when_not_configured():
 @pytest.mark.asyncio
 async def test_search_returns_502_when_service_down():
     """Search should raise HTTPException 502 when ColPali unreachable."""
+    from fastapi import HTTPException
+
     mock_client = AsyncMock()
     mock_client.post.side_effect = httpx.ConnectError("Connection refused")
     mock_db = AsyncMock()
 
-    with pytest.raises(_FakeHTTPException) as exc_info:
+    with pytest.raises(HTTPException) as exc_info:
         await search_drills(q="rondo", k=5, db=mock_db, colpali_client=mock_client)
 
     assert exc_info.value.status_code == 502

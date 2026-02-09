@@ -11,6 +11,21 @@ import pytest
 # Ensure DATABASE_URL is set before any app module import
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
 
+# Mock Docker-only modules before importing app modules
+_DOCKER_ONLY_MODULES = [
+    "docling",
+    "docling.document_converter",
+    "docling.datamodel",
+    "docling.datamodel.base_models",
+    "docling.datamodel.pipeline_options",
+    "docling_core",
+    "docling_core.types",
+    "docling_core.types.doc",
+]
+for mod in _DOCKER_ONLY_MODULES:
+    if mod not in sys.modules:
+        sys.modules[mod] = MagicMock()
+
 
 def _make_plan_dict(plan_id: str | None = None, **overrides) -> dict:
     """Build a valid SessionPlan dict for PUT body."""
@@ -48,19 +63,7 @@ def _make_plan_dict(plan_id: str | None = None, **overrides) -> dict:
 
 
 def _get_app():
-    """Lazily create a FastAPI app with session routes.
-
-    Deferred to avoid import-order issues when test_search.py
-    replaces sys.modules['fastapi'] with a MagicMock.
-    """
-    # Restore real fastapi if it was mocked by another test module
-    if "fastapi" in sys.modules and isinstance(sys.modules["fastapi"], MagicMock):
-        del sys.modules["fastapi"]
-        # Also clean up submodule mocks
-        for key in list(sys.modules):
-            if key.startswith("fastapi.") and isinstance(sys.modules[key], MagicMock):
-                del sys.modules[key]
-
+    """Create a FastAPI app with session routes."""
     from fastapi import FastAPI
     from src.api.routes.sessions import router
 

@@ -11,6 +11,15 @@ from src.schemas.session_plan import (
     DrillSetup,
     DiagramInfo,
     PlayerPosition,
+    PitchView,
+    PitchViewType,
+    MovementArrow,
+    ArrowType,
+    EquipmentObject,
+    EquipmentType,
+    GoalInfo,
+    BallPosition,
+    PitchZone,
     Source,
 )
 from .decompose import DecomposedDocument
@@ -122,6 +131,141 @@ def _parse_player_positions(positions_data: list[dict]) -> list[PlayerPosition]:
     return result
 
 
+def _clamp(val: float, lo: float = 0.0, hi: float = 100.0) -> float:
+    """Clamp a float value to [lo, hi]."""
+    return max(lo, min(hi, val))
+
+
+def _parse_pitch_view(data: dict | None) -> PitchView | None:
+    """Convert VLM pitch_view data to PitchView model."""
+    if not data or not isinstance(data, dict):
+        return None
+    try:
+        view_type_str = str(data.get("view_type", "half_pitch")).lower()
+        try:
+            view_type = PitchViewType(view_type_str)
+        except ValueError:
+            view_type = PitchViewType.HALF_PITCH
+        return PitchView(
+            view_type=view_type,
+            length_meters=data.get("length_meters"),
+            width_meters=data.get("width_meters"),
+            orientation=str(data.get("orientation", "vertical")),
+        )
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Skipping invalid pitch_view: {data} - {e}")
+        return None
+
+
+def _parse_movement_arrows(arrows_data: list[dict]) -> list[MovementArrow]:
+    """Convert VLM arrow data to MovementArrow models with coordinate clamping."""
+    result = []
+    for arrow in arrows_data:
+        try:
+            arrow_type_str = str(arrow.get("arrow_type", "movement")).lower()
+            try:
+                arrow_type = ArrowType(arrow_type_str)
+            except ValueError:
+                arrow_type = ArrowType.MOVEMENT
+            result.append(
+                MovementArrow(
+                    start_x=_clamp(float(arrow.get("start_x", 50))),
+                    start_y=_clamp(float(arrow.get("start_y", 50))),
+                    end_x=_clamp(float(arrow.get("end_x", 50))),
+                    end_y=_clamp(float(arrow.get("end_y", 50))),
+                    arrow_type=arrow_type,
+                    from_label=arrow.get("from_label"),
+                    to_label=arrow.get("to_label"),
+                    sequence_number=arrow.get("sequence_number"),
+                    label=arrow.get("label"),
+                )
+            )
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Skipping invalid arrow: {arrow} - {e}")
+    return result
+
+
+def _parse_equipment(equipment_data: list[dict]) -> list[EquipmentObject]:
+    """Convert VLM equipment data to EquipmentObject models."""
+    result = []
+    for eq in equipment_data:
+        try:
+            eq_type_str = str(eq.get("equipment_type", "cone")).lower()
+            try:
+                eq_type = EquipmentType(eq_type_str)
+            except ValueError:
+                eq_type = EquipmentType.CONE
+            obj = EquipmentObject(
+                equipment_type=eq_type,
+                x=_clamp(float(eq.get("x", 50))),
+                y=_clamp(float(eq.get("y", 50))),
+                x2=_clamp(float(eq["x2"])) if eq.get("x2") is not None else None,
+                y2=_clamp(float(eq["y2"])) if eq.get("y2") is not None else None,
+                label=eq.get("label"),
+                color=eq.get("color"),
+            )
+            result.append(obj)
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Skipping invalid equipment: {eq} - {e}")
+    return result
+
+
+def _parse_goals(goals_data: list[dict]) -> list[GoalInfo]:
+    """Convert VLM goal data to GoalInfo models."""
+    result = []
+    for goal in goals_data:
+        try:
+            result.append(
+                GoalInfo(
+                    x=_clamp(float(goal.get("x", 50))),
+                    y=_clamp(float(goal.get("y", 50))),
+                    goal_type=str(goal.get("goal_type", "full_goal")),
+                    width_meters=goal.get("width_meters"),
+                )
+            )
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Skipping invalid goal: {goal} - {e}")
+    return result
+
+
+def _parse_balls(balls_data: list[dict]) -> list[BallPosition]:
+    """Convert VLM ball data to BallPosition models."""
+    result = []
+    for ball in balls_data:
+        try:
+            result.append(
+                BallPosition(
+                    x=_clamp(float(ball.get("x", 50))),
+                    y=_clamp(float(ball.get("y", 50))),
+                    label=ball.get("label"),
+                )
+            )
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Skipping invalid ball: {ball} - {e}")
+    return result
+
+
+def _parse_zones(zones_data: list[dict]) -> list[PitchZone]:
+    """Convert VLM zone data to PitchZone models."""
+    result = []
+    for zone in zones_data:
+        try:
+            result.append(
+                PitchZone(
+                    zone_type=str(zone.get("zone_type", "area")),
+                    x1=_clamp(float(zone.get("x1", 0))),
+                    y1=_clamp(float(zone.get("y1", 0))),
+                    x2=_clamp(float(zone.get("x2", 100))),
+                    y2=_clamp(float(zone.get("y2", 100))),
+                    label=zone.get("label"),
+                    color=zone.get("color"),
+                )
+            )
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Skipping invalid zone: {zone} - {e}")
+    return result
+
+
 def _extract_list_items(text: str) -> list[str]:
     """Extract bulleted/numbered list items from a text block."""
     items = []
@@ -198,20 +342,6 @@ def _split_into_header_sections(markdown: str) -> list[tuple[str, str]]:
         sections.append((current_header, "\n".join(current_body_lines)))
 
     return sections
-
-
-def _find_image_for_section(
-    section_text: str,
-    image_keys: list[str],
-    used_images: set[str],
-) -> str | None:
-    """Find the next unused image that appears in or near this section."""
-    # Check if section contains <!-- image --> marker
-    if "<!-- image -->" in section_text:
-        for key in image_keys:
-            if key not in used_images:
-                return key
-    return None
 
 
 def _group_drill_sections(
@@ -395,32 +525,32 @@ def _extract_drill_blocks(
         prog_text = group["subsections"].get("progressions", "")
         progressions = _extract_list_items(prog_text) if prog_text else []
 
-        # Assign diagram - use next available image
+        # Assign diagram - skip non-diagram images BEFORE assignment
         diagram = DiagramInfo()
-        if image_idx < len(image_keys):
+        while image_idx < len(image_keys):
             key = image_keys[image_idx]
             desc = diagram_descriptions.get(key, {})
-            is_diagram = desc.get("is_diagram", True)
+            if not desc.get("is_diagram", False):
+                # Skip non-diagram images (logos, photos, etc.)
+                image_idx += 1
+                continue
 
+            # Found a diagram — assign it to this drill
             diagram = DiagramInfo(
                 image_ref=str(images[key]),
                 vlm_description=desc.get("description", ""),
                 player_positions=_parse_player_positions(
                     desc.get("player_positions", [])
                 ),
-                movement_arrows=desc.get("movement_arrows"),
+                pitch_view=_parse_pitch_view(desc.get("pitch_view")),
+                arrows=_parse_movement_arrows(desc.get("arrows", [])),
+                equipment=_parse_equipment(desc.get("equipment", [])),
+                goals=_parse_goals(desc.get("goals", [])),
+                balls=_parse_balls(desc.get("balls", [])),
+                zones=_parse_zones(desc.get("zones", [])),
             )
             image_idx += 1
-
-            # Skip ahead past non-diagram images to find the next real one
-            # (but still assign the first image we encounter to this drill)
-            while (
-                image_idx < len(image_keys)
-                and not diagram_descriptions.get(
-                    image_keys[image_idx], {}
-                ).get("is_diagram", True)
-            ):
-                image_idx += 1
+            break
 
         drill = DrillBlock(
             name=name,

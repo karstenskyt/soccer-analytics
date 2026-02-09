@@ -64,6 +64,7 @@ async def search_drills(
                     UUID(plan_id), db
                 )
             except Exception:
+                logger.warning("Failed to fetch plan %s for search enrichment", plan_id, exc_info=True)
                 seen_plans[plan_id] = None
 
         plan_data = seen_plans.get(plan_id) if plan_id else None

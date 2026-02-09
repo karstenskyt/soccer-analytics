@@ -81,7 +81,7 @@ Search Query ──> GET /api/search?q=...
 | **PostgreSQL** | `pgvector/pgvector:pg16` | `5434` | No |
 | **Swagger UI** | `swaggerapi/swagger-ui` | `8084` | No |
 
-ColQwen2 (~5-6 GB VRAM) + Qwen3-VL 8B (~5.4 GB) = ~11 GB total, fits in 16 GB RTX 5070 Ti. All ports are configurable via `.env`. See [Interactive Architecture Diagram](architecture.html) for a visual overview.
+ColQwen2 (~5-6 GB VRAM) + Qwen3-VL 8B (~6 GB VRAM) = ~11 GB total, fits in 16 GB RTX 5070 Ti. All ports are configurable via `.env`. See [Interactive Architecture Diagram](architecture.html) for a visual overview.
 
 ## API Endpoints
 
@@ -184,9 +184,11 @@ Pitch diagrams are rendered using [mplsoccer](https://mplsoccer.readthedocs.io/)
 
 ### Stage 2: VLM Diagram Analysis (Two-Pass)
 
-**Pass 1 — Classification & Description:** Each extracted image is sent to [Qwen3-VL](https://huggingface.co/Qwen/Qwen3-VL-8B) (8B) running on Ollama via the OpenAI-compatible vision API. The VLM classifies images as tactical diagrams or non-diagrams (photos, logos) and extracts movement patterns and tactical setup descriptions as structured JSON.
+**Pass 1 — Classification:** Each extracted image is sent to [Qwen3-VL](https://huggingface.co/Qwen/Qwen3-VL-8B) (8B) running on Ollama via the native `/api/chat` endpoint. The VLM classifies images as tactical diagrams or non-diagrams (photos, logos) and provides a brief description. Uses `json_mode` for reliable structured output.
 
-**Pass 2 — Position Extraction (Stage 2b):** A second, focused VLM pass runs only on confirmed diagrams (`is_diagram=true`) to extract player positions. The dedicated prompt uses Opta coordinates (0–100), few-shot examples, and label-to-role mapping (A→attacker, D→defender, GK→goalkeeper, N→neutral). Positions are validated (clamped to bounds, deduplicated, roles standardized) and merged into diagram descriptions before Stage 3. Configurable via `EXTRACT_POSITIONS` env var (default: `true`).
+**Pass 2 — Full Structured Extraction (Stage 2b):** A comprehensive VLM pass runs only on confirmed diagrams (`is_diagram=true`) to extract all diagram elements: player positions, movement arrows, equipment, goals, balls, pitch zones, and pitch view type. Uses Opta coordinates (0–100) and label-to-role mapping (A→attacker, D→defender, GK→goalkeeper, N→neutral). All elements are validated (clamped to bounds, deduplicated, roles standardized) and merged into diagram descriptions before Stage 3. Configurable via `EXTRACT_POSITIONS` env var (default: `true`).
+
+**Pass 3 — Conditional Retry:** If Pass 2 detects players but no arrows or equipment, a focused follow-up prompt extracts just the missing elements. Bounds worst case at 3 VLM calls per diagram.
 
 ### Stage 3: Schema Extraction
 
@@ -296,6 +298,7 @@ soccer-analytics/
 ├── requirements.dgx.txt            # DGX-specific deps
 ├── requirements.colpali.txt        # ColPali service deps (byaldi, torch)
 ├── requirements.mcp.txt            # Host-side MCP server deps
+├── requirements-dev.txt            # Dev/test deps (pytest, all above)
 ├── .mcp.json                       # MCP server registration
 ├── .env.windows.example            # Windows env template
 ├── .env.dgx.example                # DGX env template
@@ -322,10 +325,11 @@ soccer-analytics/
 │   │   └── server.py               # MCP stdio server (5 tools)
 │   ├── pipeline/
 │   │   ├── decompose.py            # Stage 1: Docling PDF decomposition
-│   │   ├── describe.py             # Stage 2 + 2b: VLM diagram analysis & position extraction
+│   │   ├── describe.py             # Stage 2 + 2b: VLM diagram analysis & extraction
 │   │   ├── extract.py              # Stage 3: Schema extraction
 │   │   ├── validate.py             # Stage 4: Tactical enrichment
-│   │   └── store.py                # Stage 5: PostgreSQL storage
+│   │   ├── store.py                # Stage 5: PostgreSQL storage
+│   │   └── vlm_backend.py          # Swappable VLM backend (Ollama native API)
 │   ├── rendering/
 │   │   ├── pitch.py                # mplsoccer pitch diagram renderer
 │   │   └── pdf_report.py           # reportlab PDF report generator
@@ -344,6 +348,21 @@ soccer-analytics/
 │   └── test_api.py
 └── documents/                      # Sample PDFs for testing
 ```
+
+## Testing
+
+Tests run against the project `.venv` which contains all dependencies (FastAPI, mplsoccer, reportlab, etc.). This avoids conflicts with system Python or other projects.
+
+```bash
+# Run all tests
+.venv\Scripts\python -m pytest tests/ -v         # Windows
+# .venv/bin/python -m pytest tests/ -v           # Linux/macOS
+
+# Run a specific test file
+.venv\Scripts\python -m pytest tests/test_pipeline.py -v
+```
+
+The `.venv` was created with `python -m venv .venv` and dependencies installed from `requirements-dev.txt` (which includes `requirements.txt` + `requirements.mcp.txt` + pytest). Docker-only modules (Docling, SQLAlchemy, asyncpg) are mocked in tests that import them.
 
 ## Useful Commands
 

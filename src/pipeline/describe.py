@@ -1,12 +1,23 @@
-"""Stage 2: Diagram description using Qwen3-VL via Ollama API."""
+"""Stage 2: Diagram classification and structured extraction using VLM via Ollama API.
+
+Pass 1 (Classification): Lightweight check — is this a coaching diagram?
+Pass 2 (Full Structured Extraction): Comprehensive extraction of all diagram elements.
+Pass 3 (Conditional Retry): Focused follow-up if Pass 2 yields sparse results.
+"""
+
+from __future__ import annotations
 
 import base64
 import json
 import logging
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
+
+if TYPE_CHECKING:
+    from .vlm_backend import VLMBackend
 
 logger = logging.getLogger(__name__)
 
@@ -28,38 +39,100 @@ _ROLE_ALIASES: dict[str, str] = {
     "neutral": "neutral",
 }
 
-# --- Pass 1 prompts (UNCHANGED) ---
+# ---------------------------------------------------------------------------
+# Pass 1: Classification prompts (lightweight)
+# ---------------------------------------------------------------------------
 
-# System message that enforces structured JSON output
-VLM_SYSTEM_PROMPT = (
-    "You are a soccer coaching diagram analyzer. You MUST respond with a "
+CLASSIFICATION_SYSTEM_PROMPT = (
+    "You are a soccer coaching diagram classifier. You MUST respond with a "
     "single valid JSON object and nothing else. No markdown, no explanation, "
-    "no text before or after the JSON. If the image is not a soccer/football "
-    "coaching diagram (e.g. it is a photograph, logo, book cover, abstract "
-    "graphic, or text-only image), respond with exactly: "
-    '{"is_diagram": false, "description": "<brief description of what the image shows>"}'
+    "no text before or after the JSON. Do NOT use <think> tags."
 )
 
-DIAGRAM_ANALYSIS_PROMPT = """Analyze this image. If it is a soccer/football coaching diagram, respond with this JSON structure:
+CLASSIFICATION_PROMPT = """Classify this image. Is it a soccer/football coaching diagram?
 
-{"is_diagram": true, "description": "Overall description of the diagram", "player_positions": [{"label": "A1", "x": 30, "y": 60, "role": "attacker"}], "movement_arrows": "Description of movement patterns", "equipment": ["cones", "goals"], "tactical_setup": "e.g. 2v1 frontal attack drill"}
+If YES (tactical diagram with player markers, arrows, pitch lines):
+{"is_diagram": true, "description": "Brief description of the drill shown"}
 
-If it is NOT a coaching diagram (photo, logo, book cover, decorative graphic, text), respond:
-
+If NO (photo, logo, book cover, decorative graphic, text-only):
 {"is_diagram": false, "description": "Brief description of what the image shows"}
 
-Remember: output ONLY the JSON object, no other text."""
+Output ONLY the JSON object."""
+
+# ---------------------------------------------------------------------------
+# Pass 2: Full structured extraction prompt
+# ---------------------------------------------------------------------------
+
+EXTRACTION_SYSTEM_PROMPT = (
+    "You are a soccer coaching diagram analyzer that extracts structured data. "
+    "You MUST respond with a single valid JSON object and nothing else. "
+    "No markdown, no explanation, no text before or after the JSON. "
+    "Do NOT use <think> tags. Respond immediately with JSON."
+)
+
+EXTRACTION_PROMPT = """Extract elements from this soccer coaching diagram as JSON.
+Coordinates: x 0-100 (left to right), y 0-100 (bottom/own goal to top/opponent goal).
+
+Roles: A/A1="attacker", D/D1="defender", GK="goalkeeper", N/N1="neutral", S="server", C="coach"
+Arrow types: "run", "pass", "shot", "dribble", "cross", "through_ball", "movement"
+Equipment: "cone", "mannequin", "pole", "gate", "hurdle", "mini_goal", "full_goal", "flag"
+Pitch views: "full_pitch", "half_pitch", "penalty_area", "third", "custom"
+
+Format:
+{"description": "...", "pitch_view": {"view_type": "half_pitch"}, "player_positions": [{"label": "A1", "x": 30, "y": 55, "role": "attacker"}], "arrows": [{"start_x": 30, "start_y": 55, "end_x": 45, "end_y": 75, "arrow_type": "run", "from_label": "A1", "sequence_number": 1}], "equipment": [{"equipment_type": "cone", "x": 25, "y": 45}], "goals": [{"x": 50, "y": 100, "goal_type": "full_goal"}], "balls": [{"x": 50, "y": 50}], "zones": []}
+
+Use empty list [] for elements not visible. Output ONLY the JSON object."""
+
+# ---------------------------------------------------------------------------
+# Pass 3: Focused arrow/equipment retry prompt
+# ---------------------------------------------------------------------------
+
+ARROWS_EQUIPMENT_SYSTEM_PROMPT = (
+    "You are a soccer coaching diagram detail extractor. You MUST respond with a "
+    "single valid JSON object and nothing else. No markdown, no explanation. "
+    "Do NOT use <think> tags. Respond immediately with JSON."
+)
+
+ARROWS_EQUIPMENT_PROMPT = """Look carefully at this soccer coaching diagram and extract ONLY the movement arrows and equipment.
+
+Use the Opta coordinate system (x: 0-100, y: 0-100).
+
+Arrow types: "run" (solid line), "pass" (dashed), "shot" (thick), "dribble" (wavy), "cross", "through_ball", "movement"
+Equipment types: "cone", "mannequin", "pole", "gate", "hurdle", "mini_goal", "full_goal", "flag"
+
+Respond with:
+{"arrows": [{"start_x": 30, "start_y": 55, "end_x": 45, "end_y": 75, "arrow_type": "run", "from_label": "A1"}], "equipment": [{"equipment_type": "cone", "x": 25, "y": 45}], "goals": [{"x": 50, "y": 100, "goal_type": "full_goal"}], "balls": [{"x": 50, "y": 50}], "zones": []}
+
+Output ONLY the JSON object."""
+
+
+# ---------------------------------------------------------------------------
+# Core helpers
+# ---------------------------------------------------------------------------
 
 
 def _extract_json_from_text(text: str) -> dict | None:
     """Extract a JSON object from text that may contain surrounding content.
 
     Tries multiple strategies:
+    0. Strip <think>...</think> reasoning blocks (Qwen3-VL)
     1. Direct parse of the full text
     2. Strip markdown code fences
     3. Find the outermost { } pair
     """
-    cleaned = text.strip()
+    # Strategy 0: Strip <think> reasoning blocks that consume token budget
+    # Handle both closed <think>...</think> and unclosed <think>... (token limit hit)
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    # If an unclosed <think> remains, strip from <think> to end (or to first {)
+    if "<think>" in cleaned:
+        think_start = cleaned.index("<think>")
+        # Check if there's JSON after the unclosed think block
+        brace_pos = cleaned.find("{", think_start)
+        if brace_pos != -1:
+            cleaned = cleaned[:think_start] + cleaned[brace_pos:]
+        else:
+            cleaned = cleaned[:think_start]
+    cleaned = cleaned.strip()
 
     # Strategy 1: Direct parse
     try:
@@ -70,7 +143,6 @@ def _extract_json_from_text(text: str) -> dict | None:
     # Strategy 2: Strip markdown fences
     if cleaned.startswith("```"):
         lines = cleaned.split("\n")
-        # Remove first line (```json or ```) and last ``` line
         inner_lines = []
         started = False
         for line in lines:
@@ -129,117 +201,78 @@ def _extract_json_from_text(text: str) -> dict | None:
     return None
 
 
-async def describe_single_diagram(
+async def _vlm_call(
     image_path: Path,
     ollama_url: str,
     model: str,
-) -> dict:
-    """Send a single diagram image to Qwen3-VL for analysis.
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int = 4096,
+    temperature: float = 0.1,
+    *,
+    vlm: VLMBackend | None = None,
+    json_mode: bool = False,
+) -> str:
+    """Send an image + prompt to the VLM and return the raw text content.
+
+    If a VLMBackend is provided via the `vlm` kwarg, it is used directly.
+    Otherwise, falls back to the legacy ollama_url/model HTTP call.
 
     Args:
-        image_path: Path to the diagram image.
-        ollama_url: Base URL of the Ollama service.
-        model: VLM model name (e.g., 'qwen3-vl:8b').
-
-    Returns:
-        Dict with VLM analysis results including 'is_diagram' flag.
+        json_mode: If True, constrain output to valid JSON (Ollama format=json).
+            Use for simple prompts only; complex prompts may return empty with this on.
     """
+    if vlm is not None:
+        resp = await vlm.chat_completion(
+            image_path=image_path,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            json_mode=json_mode,
+        )
+        logger.debug(f"VLM raw response for {image_path.name}: {resp.content[:300]}")
+        return resp.content
+
+    # Legacy path: direct Ollama HTTP call (native /api/chat endpoint)
     image_bytes = image_path.read_bytes()
     image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
-    payload = {
+    payload: dict = {
         "model": model,
         "messages": [
-            {
-                "role": "system",
-                "content": VLM_SYSTEM_PROMPT,
-            },
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{image_b64}"
-                        },
-                    },
-                    {
-                        "type": "text",
-                        "text": DIAGRAM_ANALYSIS_PROMPT,
-                    },
-                ],
+                "content": user_prompt,
+                "images": [image_b64],
             },
         ],
-        "temperature": 0.1,
-        "max_tokens": 1024,
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+        },
+        "think": False,
+        "stream": False,
     }
+    if json_mode:
+        payload["format"] = "json"
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(
-            f"{ollama_url}/v1/chat/completions",
+            f"{ollama_url}/api/chat",
             json=payload,
         )
         response.raise_for_status()
         result = response.json()
 
-    content = result["choices"][0]["message"]["content"]
-
-    parsed = _extract_json_from_text(content)
-    if parsed is not None:
-        # Ensure is_diagram field exists
-        if "is_diagram" not in parsed:
-            parsed["is_diagram"] = True
-        return parsed
-
-    logger.warning(f"Could not parse VLM JSON for {image_path.name}, using fallback")
-    # Check if the raw text suggests it's not a diagram
-    lower = content.lower()
-    is_photo = any(
-        w in lower
-        for w in ("photograph", "photo of", "portrait", "not a diagram", "book cover")
-    )
-    return {
-        "is_diagram": not is_photo,
-        "description": content,
-        "player_positions": [],
-        "movement_arrows": "",
-        "equipment": [],
-        "tactical_setup": "",
-    }
+    content = result["message"]["content"]
+    logger.debug(f"VLM raw response for {image_path.name}: {content[:300]}")
+    return content
 
 
-# --- Pass 2 prompts: Focused position extraction ---
-
-POSITION_EXTRACTION_SYSTEM_PROMPT = (
-    "You are a soccer coaching diagram position extractor. You MUST respond "
-    "with a single valid JSON object and nothing else. No markdown, no "
-    "explanation, no text before or after the JSON."
-)
-
-POSITION_EXTRACTION_PROMPT = """Look at this soccer coaching diagram and extract the positions of ALL player markers.
-
-Use the Opta coordinate system:
-- x: 0 (left) to 100 (right)
-- y: 0 (bottom/own goal) to 100 (top/opponent goal)
-
-Player markers include: circles, dots, filled/unfilled shapes, or labels like A1, D2, GK, N1.
-
-Label-to-role mapping:
-- A, A1, A2... = "attacker"
-- D, D1, D2... = "defender"
-- GK = "goalkeeper"
-- N, N1... = "neutral"
-- Numbered only (1, 2, 3) = use position context or null
-
-Example 1 (2v1 drill):
-{"player_positions": [{"label": "A1", "x": 30, "y": 60, "role": "attacker"}, {"label": "A2", "x": 50, "y": 55, "role": "attacker"}, {"label": "D1", "x": 40, "y": 70, "role": "defender"}]}
-
-Example 2 (4v3 exercise):
-{"player_positions": [{"label": "GK", "x": 50, "y": 5, "role": "goalkeeper"}, {"label": "A1", "x": 25, "y": 45, "role": "attacker"}, {"label": "A2", "x": 50, "y": 50, "role": "attacker"}, {"label": "A3", "x": 75, "y": 45, "role": "attacker"}, {"label": "A4", "x": 50, "y": 35, "role": "attacker"}, {"label": "D1", "x": 35, "y": 60, "role": "defender"}, {"label": "D2", "x": 50, "y": 65, "role": "defender"}, {"label": "D3", "x": 65, "y": 60, "role": "defender"}]}
-
-If no player markers are visible, respond: {"player_positions": []}
-
-Output ONLY the JSON object."""
+# Retry system prompt suffix that suppresses think-tag reasoning
+_NO_THINK_SUFFIX = " Do NOT use <think> tags. Respond immediately with JSON."
 
 
 def _validate_positions(raw_positions: list[dict]) -> list[dict]:
@@ -276,7 +309,6 @@ def _validate_positions(raw_positions: list[dict]) -> list[dict]:
         if role is not None:
             role = str(role).strip().lower()
             role = _ROLE_ALIASES.get(role, role)
-            # Only keep known roles
             if role not in (
                 "goalkeeper", "attacker", "defender", "midfielder", "neutral",
             ):
@@ -292,165 +324,273 @@ def _validate_positions(raw_positions: list[dict]) -> list[dict]:
     return validated
 
 
-async def extract_positions_from_diagram(
+# ---------------------------------------------------------------------------
+# Pass 1: Classification
+# ---------------------------------------------------------------------------
+
+
+async def classify_single_diagram(
     image_path: Path,
-    ollama_url: str,
-    model: str,
-) -> list[dict]:
-    """Send a diagram image to VLM for focused position extraction (Pass 2).
+    ollama_url: str = "",
+    model: str = "",
+    max_tokens: int = 1024,
+    *,
+    vlm: VLMBackend | None = None,
+) -> dict:
+    """Pass 1: Classify whether an image is a coaching diagram.
 
-    Returns a list of validated position dicts, or [] on any failure.
+    Returns dict with 'is_diagram' bool and 'description' str.
     """
-    try:
-        image_bytes = image_path.read_bytes()
-        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+    content = await _vlm_call(
+        image_path, ollama_url, model,
+        system_prompt=CLASSIFICATION_SYSTEM_PROMPT,
+        user_prompt=CLASSIFICATION_PROMPT,
+        max_tokens=max_tokens,
+        vlm=vlm,
+        json_mode=True,
+    )
 
-        payload = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": POSITION_EXTRACTION_SYSTEM_PROMPT,
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{image_b64}"
-                            },
-                        },
-                        {
-                            "type": "text",
-                            "text": POSITION_EXTRACTION_PROMPT,
-                        },
-                    ],
-                },
-            ],
-            "temperature": 0.1,
-            "max_tokens": 2048,
-        }
+    parsed = _extract_json_from_text(content)
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                f"{ollama_url}/v1/chat/completions",
-                json=payload,
-            )
-            response.raise_for_status()
-            result = response.json()
-
-        content = result["choices"][0]["message"]["content"]
+    # Retry with thinking-suppressed prompt if first attempt fails
+    if parsed is None:
+        logger.info(f"Pass 1: Retrying {image_path.name} with no-think prompt")
+        content = await _vlm_call(
+            image_path, ollama_url, model,
+            system_prompt=CLASSIFICATION_SYSTEM_PROMPT + _NO_THINK_SUFFIX,
+            user_prompt=CLASSIFICATION_PROMPT,
+            max_tokens=max_tokens,
+            vlm=vlm,
+            json_mode=True,
+        )
         parsed = _extract_json_from_text(content)
 
-        if parsed is None:
-            logger.warning(
-                f"Pass 2: Could not parse JSON for {image_path.name}"
-            )
-            return []
+    if parsed is not None:
+        if "is_diagram" not in parsed:
+            parsed["is_diagram"] = True
+        return parsed
 
-        raw_positions = parsed.get("player_positions", [])
-        if not isinstance(raw_positions, list):
-            logger.warning(
-                f"Pass 2: player_positions is not a list for {image_path.name}"
-            )
-            return []
-
-        validated = _validate_positions(raw_positions)
-        logger.info(
-            f"Pass 2: Extracted {len(validated)} positions from {image_path.name}"
-        )
-        return validated
-
-    except Exception as e:
-        logger.error(f"Pass 2: Failed for {image_path.name}: {e}")
-        return []
+    logger.warning(f"Pass 1: Could not parse JSON for {image_path.name}, using fallback")
+    lower = content.lower()
+    is_photo = any(
+        w in lower
+        for w in ("photograph", "photo of", "portrait", "not a diagram", "book cover")
+    )
+    return {
+        "is_diagram": not is_photo,
+        "description": content[:200],
+    }
 
 
-async def extract_all_positions(
+async def classify_diagrams(
     images: dict[str, Path],
-    diagram_descriptions: dict[str, dict],
-    ollama_url: str,
-    model: str,
-) -> dict[str, list[dict]]:
-    """Run focused position extraction on all confirmed diagrams.
+    ollama_url: str = "",
+    model: str = "",
+    max_tokens: int = 1024,
+    *,
+    vlm: VLMBackend | None = None,
+) -> dict[str, dict]:
+    """Pass 1: Classify all images as diagram or non-diagram.
 
-    Only processes images where is_diagram=True in diagram_descriptions.
-
-    Returns dict of image_key -> list of validated position dicts.
+    Returns dict of image_key -> classification result.
     """
-    results: dict[str, list[dict]] = {}
-    diagram_count = 0
-    positions_found = 0
+    logger.info(f"Pass 1: Classifying {len(images)} images with {model}")
+    results: dict[str, dict] = {}
 
     for key, image_path in images.items():
-        desc = diagram_descriptions.get(key, {})
-        if not desc.get("is_diagram", False):
-            continue
+        logger.info(f"Pass 1: Classifying {key}")
+        try:
+            result = await classify_single_diagram(
+                image_path, ollama_url, model, max_tokens=max_tokens, vlm=vlm,
+            )
+            is_diag = result.get("is_diagram", True)
+            logger.info(
+                f"  {key}: is_diagram={is_diag}, "
+                f"desc={result.get('description', '')[:80]}..."
+            )
+            results[key] = result
+        except Exception as e:
+            logger.error(f"Pass 1: Failed for {key}: {e}")
+            results[key] = {
+                "is_diagram": False,
+                "description": f"Classification failed: {e}",
+            }
 
-        diagram_count += 1
-        logger.info(f"Pass 2: Extracting positions from {key}")
-        positions = await extract_positions_from_diagram(
-            image_path, ollama_url, model
-        )
-        if positions:
-            results[key] = positions
-            positions_found += len(positions)
-
+    diagram_count = sum(
+        1 for d in results.values() if d.get("is_diagram", False)
+    )
     logger.info(
-        f"Pass 2 complete: {diagram_count} diagrams processed, "
-        f"{len(results)} yielded positions ({positions_found} total players)"
+        f"Pass 1 complete: {len(results)} classified, "
+        f"{diagram_count} diagrams, {len(results) - diagram_count} non-diagrams"
     )
     return results
 
 
-async def describe_diagrams(
-    images: dict[str, Path],
-    ollama_url: str,
-    model: str,
-) -> dict[str, dict]:
-    """Describe all diagram images using the VLM.
+# ---------------------------------------------------------------------------
+# Pass 2: Full Structured Extraction
+# ---------------------------------------------------------------------------
 
-    Args:
-        images: Dict of image_key -> file path.
-        ollama_url: Base URL of the Ollama service.
-        model: VLM model name.
 
-    Returns:
-        Dict of image_key -> VLM analysis results.
+async def extract_diagram_structure(
+    image_path: Path,
+    ollama_url: str = "",
+    model: str = "",
+    max_tokens: int = 8192,
+    *,
+    vlm: VLMBackend | None = None,
+) -> dict:
+    """Pass 2: Extract full structured data from a confirmed diagram.
+
+    Returns dict with player_positions, arrows, equipment, goals, balls, zones, pitch_view.
     """
-    logger.info(f"Describing {len(images)} diagrams with {model}")
-    descriptions: dict[str, dict] = {}
+    try:
+        content = await _vlm_call(
+            image_path, ollama_url, model,
+            system_prompt=EXTRACTION_SYSTEM_PROMPT,
+            user_prompt=EXTRACTION_PROMPT,
+            max_tokens=max_tokens,
+            vlm=vlm,
+        )
+        parsed = _extract_json_from_text(content)
+
+        # Retry with thinking-suppressed prompt if first attempt fails
+        if parsed is None:
+            logger.info(f"Pass 2: Retrying {image_path.name} with no-think prompt")
+            content = await _vlm_call(
+                image_path, ollama_url, model,
+                system_prompt=EXTRACTION_SYSTEM_PROMPT + _NO_THINK_SUFFIX,
+                user_prompt=EXTRACTION_PROMPT,
+                max_tokens=max_tokens,
+                vlm=vlm,
+            )
+            parsed = _extract_json_from_text(content)
+
+        if parsed is None:
+            logger.warning(
+                f"Pass 2: Could not parse JSON for {image_path.name}. "
+                f"Raw VLM output (first 500 chars): {content[:500]}"
+            )
+            return {}
+
+        # Validate player positions
+        raw_positions = parsed.get("player_positions", [])
+        if isinstance(raw_positions, list):
+            parsed["player_positions"] = _validate_positions(raw_positions)
+
+        return parsed
+
+    except Exception as e:
+        logger.error(f"Pass 2: Failed for {image_path.name}: {e}")
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# Pass 3: Conditional arrow/equipment retry
+# ---------------------------------------------------------------------------
+
+
+async def extract_arrows_equipment(
+    image_path: Path,
+    ollama_url: str = "",
+    model: str = "",
+    max_tokens: int = 4096,
+    *,
+    vlm: VLMBackend | None = None,
+) -> dict:
+    """Pass 3: Focused extraction of arrows and equipment only.
+
+    Used as a follow-up when Pass 2 found players but sparse arrows/equipment.
+    """
+    try:
+        content = await _vlm_call(
+            image_path, ollama_url, model,
+            system_prompt=ARROWS_EQUIPMENT_SYSTEM_PROMPT,
+            user_prompt=ARROWS_EQUIPMENT_PROMPT,
+            max_tokens=max_tokens,
+            vlm=vlm,
+        )
+        parsed = _extract_json_from_text(content)
+
+        if parsed is None:
+            logger.warning(f"Pass 3: Could not parse JSON for {image_path.name}")
+            return {}
+
+        return parsed
+
+    except Exception as e:
+        logger.error(f"Pass 3: Failed for {image_path.name}: {e}")
+        return {}
+
+
+def _is_sparse_result(data: dict) -> bool:
+    """Check if Pass 2 result has players but sparse arrows/equipment."""
+    has_players = len(data.get("player_positions", [])) > 0
+    has_arrows = len(data.get("arrows", [])) > 0
+    has_equipment = len(data.get("equipment", [])) > 0
+    return has_players and not has_arrows and not has_equipment
+
+
+async def extract_diagram_structures(
+    images: dict[str, Path],
+    classifications: dict[str, dict],
+    ollama_url: str = "",
+    model: str = "",
+    max_tokens_pass2: int = 8192,
+    max_tokens_pass3: int = 4096,
+    *,
+    vlm: VLMBackend | None = None,
+) -> dict[str, dict]:
+    """Run Pass 2 (+ conditional Pass 3) on all confirmed diagrams.
+
+    Only processes images where is_diagram=True in classifications.
+    Merges Pass 2 classification description into results.
+
+    Returns dict of image_key -> enriched structure data.
+    """
+    results: dict[str, dict] = {}
+    diagram_count = 0
+    pass3_count = 0
 
     for key, image_path in images.items():
-        logger.info(f"Analyzing diagram: {key}")
-        try:
-            desc = await describe_single_diagram(
-                image_path, ollama_url, model
-            )
-            is_diag = desc.get("is_diagram", True)
-            logger.info(
-                f"  {key}: is_diagram={is_diag}, "
-                f"desc={desc.get('description', '')[:80]}..."
-            )
-            descriptions[key] = desc
-        except Exception as e:
-            logger.error(f"Failed to describe {key}: {e}")
-            descriptions[key] = {
-                "is_diagram": False,
-                "description": f"Analysis failed: {e}",
-                "player_positions": [],
-                "movement_arrows": "",
-                "equipment": [],
-                "tactical_setup": "",
-            }
+        classification = classifications.get(key, {})
+        if not classification.get("is_diagram", False):
+            continue
 
-    diagram_count = sum(
-        1 for d in descriptions.values() if d.get("is_diagram", True)
-    )
+        diagram_count += 1
+        logger.info(f"Pass 2: Extracting structure from {key}")
+
+        data = await extract_diagram_structure(
+            image_path, ollama_url, model, max_tokens=max_tokens_pass2, vlm=vlm,
+        )
+
+        # Carry forward the Pass 1 description if Pass 2 didn't provide one
+        if not data.get("description") and classification.get("description"):
+            data["description"] = classification["description"]
+
+        # Pass 3: conditional retry for sparse results
+        if _is_sparse_result(data):
+            logger.info(f"Pass 3: Sparse result for {key}, retrying arrows/equipment")
+            pass3_count += 1
+            extra = await extract_arrows_equipment(
+                image_path, ollama_url, model, max_tokens=max_tokens_pass3, vlm=vlm,
+            )
+            # Merge Pass 3 results into Pass 2 data
+            for field in ("arrows", "equipment", "goals", "balls", "zones"):
+                if extra.get(field) and not data.get(field):
+                    data[field] = extra[field]
+
+        positions_count = len(data.get("player_positions", []))
+        arrows_count = len(data.get("arrows", []))
+        equipment_count = len(data.get("equipment", []))
+        logger.info(
+            f"  {key}: {positions_count} players, {arrows_count} arrows, "
+            f"{equipment_count} equipment items"
+        )
+
+        results[key] = data
+
     logger.info(
-        f"Diagram description complete: {len(descriptions)} analyzed, "
-        f"{diagram_count} tactical diagrams, "
-        f"{len(descriptions) - diagram_count} non-diagrams"
+        f"Pass 2 complete: {diagram_count} diagrams processed, "
+        f"{pass3_count} needed Pass 3 retry"
     )
-    return descriptions
+    return results

@@ -4,8 +4,9 @@
 !.env.windows.example
 !.env.dgx.example
 
-# Documents (sample PDFs, not tracked)
+# Documents and samples (PDFs, not tracked)
 documents/
+samples/
 
 # Internal planning
 PLAN.md
@@ -21,6 +22,9 @@ build/
 .eggs/
 .venv/
 venv/
+
+# Pipeline output
+output/
 
 # Uploads and temp
 uploads/

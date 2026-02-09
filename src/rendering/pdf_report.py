@@ -20,8 +20,6 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
-from reportlab.platypus.tableofcontents import TableOfContents
-
 from src.schemas.session_plan import DrillBlock, SessionPlan
 
 logger = logging.getLogger(__name__)

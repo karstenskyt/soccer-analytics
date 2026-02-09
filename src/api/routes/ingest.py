@@ -12,10 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.config import settings
 from src.api.deps import get_colpali_client, get_db
 from src.pipeline.decompose import decompose_pdf
-from src.pipeline.describe import describe_diagrams, extract_all_positions
+from src.pipeline.describe import classify_diagrams, extract_diagram_structures
 from src.pipeline.extract import extract_session_plan
 from src.pipeline.validate import validate_and_enrich
 from src.pipeline.store import store_session_plan
+from src.pipeline.vlm_backend import create_vlm_backend
 
 logger = logging.getLogger(__name__)
 
@@ -69,24 +70,34 @@ async def ingest_pdf(
         output_dir = upload_dir / "images"
         document = await decompose_pdf(pdf_path, output_dir)
 
-        # Stage 2: Describe diagrams with VLM
-        diagram_descriptions = await describe_diagrams(
-            images=document.images,
+        # Create VLM backend
+        vlm = create_vlm_backend(
             ollama_url=settings.ollama_url,
-            model=settings.vlm_model,
+            vlm_model=settings.vlm_model,
         )
 
-        # Stage 2b: Focused position extraction (second VLM pass)
+        # Stage 2: Classify diagrams with VLM (Pass 1)
+        classifications = await classify_diagrams(
+            images=document.images,
+            max_tokens=settings.vlm_max_tokens_pass1,
+            vlm=vlm,
+        )
+
+        # Stage 2b: Full structured extraction (Pass 2 + conditional Pass 3)
         if settings.extract_positions:
-            position_data = await extract_all_positions(
+            structure_data = await extract_diagram_structures(
                 images=document.images,
-                diagram_descriptions=diagram_descriptions,
-                ollama_url=settings.ollama_url,
-                model=settings.vlm_model,
+                classifications=classifications,
+                max_tokens_pass2=settings.vlm_max_tokens_pass2,
+                vlm=vlm,
             )
-            for key, positions in position_data.items():
-                if key in diagram_descriptions and positions:
-                    diagram_descriptions[key]["player_positions"] = positions
+            # Merge structure data into classifications for downstream use
+            for key, data in structure_data.items():
+                if key in classifications:
+                    classifications[key].update(data)
+
+        # Use classifications as the unified diagram_descriptions dict
+        diagram_descriptions = classifications
 
         # Stage 3: Extract structured data
         session_plan = await extract_session_plan(

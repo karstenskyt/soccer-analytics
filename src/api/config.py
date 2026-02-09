@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     # Position extraction (Pass 2)
     extract_positions: bool = True
 
+    # VLM token budgets
+    vlm_max_tokens_pass1: int = 4096
+    vlm_max_tokens_pass2: int = 8192
+
     # ColPali visual retrieval (empty = disabled)
     colpali_url: str = ""
     colpali_timeout_seconds: int = 120
