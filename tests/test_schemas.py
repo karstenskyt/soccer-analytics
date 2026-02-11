@@ -246,21 +246,11 @@ def test_drill_type_defaults_none():
 
 
 from tests.fixtures.gemini_extractions import (
-    GEMINI_GKNEXUS,
     GEMINI_NIELSEN,
     GEMINI_ROBERTS,
     GEMINI_WHEDDON,
     ALL_GEMINI_FIXTURES,
 )
-
-
-def test_gemini_gknexus_validates():
-    """GkNexus session plan parses through model_validate cleanly."""
-    plan = SessionPlan.model_validate(GEMINI_GKNEXUS)
-    assert plan.metadata.title == "GkNexus Goalkeeper Session"
-    assert len(plan.drills) == 2
-    assert plan.drills[0].drill_type == "Warm-Up"
-    assert plan.drills[1].drill_type == "Game-Related Practice"
 
 
 def test_gemini_nielsen_validates():

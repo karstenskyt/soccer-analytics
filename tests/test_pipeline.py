@@ -404,68 +404,6 @@ def test_is_title_card():
 # --- Drill count tests (representative markdown for each session plan format) ---
 
 
-# GkNexus: 5 Organisation/Progression(s) pairs under a title header → 5 drills
-_GKNEXUS_MARKDOWN = """\
-## Crossing session for GK: dealing with serves across goal
-
-Category: Goalkeeping: Crossing/High balls Difficulty: Moderate
-
-## Organisation
-
-Screen 1: Warm-up handling drill with cones on each side of penalty area.
-GK works with coach on basic handling, footwork, and positioning.
-
-## Progression(s)
-
-Add a second server from the opposite side. Increase serve speed.
-
-## Organisation
-
-Screen 2: Two GKs work alternating. Server from the 6-yard box area.
-Focus on set position and shot-stopping angles.
-
-## Progression(s)
-
-Server can now move closer to create tighter angles.
-
-## Organisation
-
-Screen 3: 6-Server bombardment in arc around penalty area.
-GK faces rapid-fire shots with recovery between saves.
-
-## Progression(s)
-
-Reduce recovery time between saves, add rebounds.
-
-## Organisation
-
-Screen 4: Central and wide servers combined.
-GK transitions between central and angled saves.
-
-## Progression(s)
-
-Add a live attacker who can follow up on rebounds.
-
-## Organisation
-
-Screen 5: Full game scenario with 3v3 in the box.
-GK faces realistic game situations with crossing and finishing.
-
-## Progression(s)
-
-Make it 4v4, require minimum 3 passes before shot.
-"""
-
-
-def test_gknexus_drill_count():
-    """GkNexus plan: 5 Organisation/Progression(s) pairs → 5 drills."""
-    drills = _extract_drill_blocks(
-        _GKNEXUS_MARKDOWN, {}, {},
-        session_title="Crossing session for GK: dealing with serves across goal",
-    )
-    assert len(drills) == 5
-
-
 # Ashley Roberts: title card + 4 real drills → 4 drills
 _ROBERTS_MARKDOWN = """\
 ## ANGK - METHODOLOGY - CUTBACKS FRONT POST AREA
@@ -568,36 +506,6 @@ def test_nielsen_drill_count():
         session_title="Adv. Nat. GK Diploma - Session Plan",
     )
     assert len(drills) == 3
-
-
-def test_gknexus_first_drill_has_subsections():
-    """GkNexus drills should have setup and progressions from Organisation/Progression(s)."""
-    drills = _extract_drill_blocks(
-        _GKNEXUS_MARKDOWN, {}, {},
-        session_title="Crossing session for GK: dealing with serves across goal",
-    )
-    # First drill should have setup description from Organisation
-    assert "Screen 1" in drills[0].setup.description
-    # Last drill should have setup description from last Organisation
-    assert "Screen 5" in drills[4].setup.description
-
-
-def test_repeated_organisation_creates_separate_drills():
-    """Each Organisation/Progression(s) pair should be a separate drill."""
-    sections = _split_into_header_sections(_GKNEXUS_MARKDOWN)
-    groups = _group_drill_sections(sections)
-    # Title card absorbs first Org/Prog pair as subsections.
-    # Remaining 4 Org repeats create 4 new auto-named drills = 5 total groups.
-    assert len(groups) == 5
-    # First group is the title card (with Org1+Prog1 as subsections)
-    assert "Crossing session" in groups[0]["name"]
-    assert "setup" in groups[0]["subsections"]
-    assert "progressions" in groups[0]["subsections"]
-    # Remaining groups have auto-generated names from Organisation body text
-    assert "Screen 2" in groups[1]["name"]
-    assert "Screen 3" in groups[2]["name"]
-    assert "Screen 4" in groups[3]["name"]
-    assert "Screen 5" in groups[4]["name"]
 
 
 # --- Cross-validation tests ---

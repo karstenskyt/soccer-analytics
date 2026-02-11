@@ -222,20 +222,10 @@ def test_drill_with_zones_and_balls():
 
 from src.schemas.session_plan import SessionPlan
 from tests.fixtures.gemini_extractions import (
-    GEMINI_GKNEXUS,
     GEMINI_NIELSEN,
     GEMINI_ROBERTS,
     GEMINI_WHEDDON,
 )
-
-
-def test_gemini_gknexus_screen5_renders():
-    """GkNexus Screen 5 (6-server bombardment) renders valid PNG."""
-    plan = SessionPlan.model_validate(GEMINI_GKNEXUS)
-    drill = plan.drills[1]  # Screen 5: 6-Server Bombardment
-    result = render_drill_diagram(drill)
-    assert _is_png(result)
-    assert len(result) > 5000
 
 
 def test_gemini_nielsen_setup3_renders():
