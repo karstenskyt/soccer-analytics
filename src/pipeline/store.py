@@ -37,11 +37,11 @@ async def _insert_drill_blocks(
                 INSERT INTO drill_blocks (id, session_plan_id, name, setup_description,
                                           player_count, equipment, area_dimensions,
                                           sequence, rules, scoring, coaching_points,
-                                          progressions, vlm_description, image_ref, raw_json)
+                                          progressions, description, image_ref, raw_json)
                 VALUES (:id, :session_plan_id, :name, :setup_description,
                         :player_count, :equipment, :area_dimensions,
                         :sequence, :rules, :scoring, :coaching_points,
-                        :progressions, :vlm_description, :image_ref, :raw_json)
+                        :progressions, :description, :image_ref, :raw_json)
                 ON CONFLICT (id) DO UPDATE SET
                     raw_json = EXCLUDED.raw_json
             """),
@@ -58,7 +58,7 @@ async def _insert_drill_blocks(
                 "scoring": drill.scoring,
                 "coaching_points": drill.coaching_points,
                 "progressions": drill.progressions,
-                "vlm_description": drill.diagram.vlm_description,
+                "description": drill.diagram.description,
                 "image_ref": drill.diagram.image_ref,
                 "raw_json": json.dumps(drill_json),
             },

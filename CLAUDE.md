@@ -24,9 +24,19 @@ pytest, etc.). Install or update deps with:
 .venv\Scripts\pip install -r requirements-dev.txt   # Windows
 ```
 
+## Schema (OSTI)
+
+Pydantic data models are defined in the **osti** package
+(`osti @ git+https://github.com/karstenskyt/osti.git@v0.1.0`).
+Local files in `src/schemas/` are **thin re-export wrappers** — do NOT add
+or modify model classes there. Schema changes go to the osti repo.
+
+The `description` field on `DiagramInfo` (not `vlm_description`) is the
+canonical diagram description field name defined by OSTI.
+
 ## Code Style
 
-- Pydantic models live in `src/schemas/`
+- Schema re-exports live in `src/schemas/` (from osti)
 - Pipeline stages live in `src/pipeline/`
 - Rendering lives in `src/rendering/`
 - All new Optional fields on Pydantic models must default to `None`

@@ -2,6 +2,7 @@
 
 import logging
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 
 from src.schemas.session_plan import (
@@ -588,7 +589,7 @@ def _extract_drill_blocks(
             # Found a diagram — assign it to this drill
             diagram = DiagramInfo(
                 image_ref=str(images[key]),
-                vlm_description=desc.get("description", ""),
+                description=desc.get("description", ""),
                 player_positions=_parse_player_positions(
                     desc.get("player_positions", [])
                 ),
@@ -737,6 +738,7 @@ async def extract_session_plan(
     source = Source(
         filename=source_filename,
         page_count=document.page_count,
+        extraction_timestamp=datetime.now(UTC),
     )
 
     session_plan = SessionPlan(

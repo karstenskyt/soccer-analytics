@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS drill_blocks (
     scoring TEXT[],
     coaching_points TEXT[],
     progressions TEXT[],
-    vlm_description TEXT,
+    description TEXT,
     image_ref TEXT,
     raw_json JSONB NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()

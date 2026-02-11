@@ -44,7 +44,7 @@ GEMINI_GKNEXUS: dict = {
                 "area_dimensions": "16x12 yards",
             },
             "diagram": {
-                "vlm_description": "Goalkeeper warm-up drill with zigzag "
+                "description": "Goalkeeper warm-up drill with zigzag "
                 "cone pattern and coach serving balls.",
                 "player_positions": [
                     {"label": "GK", "x": 50.0, "y": 15.0, "role": "goalkeeper"},
@@ -139,7 +139,7 @@ GEMINI_GKNEXUS: dict = {
                 "area_dimensions": "Penalty area",
             },
             "diagram": {
-                "vlm_description": "6 servers in an arc around penalty area, "
+                "description": "6 servers in an arc around penalty area, "
                 "each shooting at GK. Arrows show shot directions. GK "
                 "must recover and reposition between each shot.",
                 "player_positions": [
@@ -294,7 +294,7 @@ GEMINI_NIELSEN: dict = {
                 "area_dimensions": "25x20 yards",
             },
             "diagram": {
-                "vlm_description": "4v4+3 rondo in a rectangular grid. "
+                "description": "4v4+3 rondo in a rectangular grid. "
                 "4 red attackers, 4 blue defenders, 3 yellow neutrals "
                 "on the outside. Ball played between attacking team "
                 "and neutrals to maintain possession.",
@@ -409,7 +409,7 @@ GEMINI_NIELSEN: dict = {
                 "area_dimensions": "40x30 yards",
             },
             "diagram": {
-                "vlm_description": "4v4+3 game with two mini goals and "
+                "description": "4v4+3 game with two mini goals and "
                 "marked zones. Defensive line zone marked in blue, "
                 "PK exclusion zone in red. Directional play from "
                 "one goal to the other.",
@@ -573,7 +573,7 @@ GEMINI_ROBERTS: dict = {
                 "area_dimensions": "Half pitch width, penalty area depth",
             },
             "diagram": {
-                "vlm_description": "Crossing drill from the right wing. "
+                "description": "Crossing drill from the right wing. "
                 "Wide player dribbles to byline, cuts back. A1 attacks "
                 "near post, A2 attacks far post / cutback zone. "
                 "Arrows show dribble, cross, and runs.",
@@ -720,7 +720,7 @@ GEMINI_WHEDDON: dict = {
                 "area_dimensions": "Penalty area width",
             },
             "diagram": {
-                "vlm_description": "GK faces alternating shots from S1 and "
+                "description": "GK faces alternating shots from S1 and "
                 "S2 at 45-degree angles. Transition arrows show GK "
                 "shuffling across goal between saves. Cones mark "
                 "the GK's set positions.",

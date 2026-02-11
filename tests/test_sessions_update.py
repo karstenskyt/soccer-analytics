@@ -48,7 +48,7 @@ def _make_plan_dict(plan_id: str | None = None, **overrides) -> dict:
                     "equipment": ["cones"],
                     "area_dimensions": "30x20 yards",
                 },
-                "diagram": {"vlm_description": "", "player_positions": []},
+                "diagram": {"description": "", "player_positions": []},
                 "sequence": ["Pass to striker", "Finish on goal"],
                 "coaching_points": ["Timing of run"],
                 "rules": [],

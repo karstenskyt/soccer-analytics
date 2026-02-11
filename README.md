@@ -230,6 +230,26 @@ After database storage, the orchestrator sends the PDF to the ColPali service fo
 
 ## Data Model
 
+### OSTI Schema Package
+
+All Pydantic data models (session plans, drills, tactical contexts) are defined in the [`osti`](https://github.com/karstenskyt/osti) package — the single source of truth for schema definitions. Local files in `src/schemas/` are thin re-export wrappers that preserve all existing import paths:
+
+```python
+# src/schemas/session_plan.py — re-exports from OSTI
+from osti.session_plan import SessionPlan, DrillBlock, DiagramInfo, Source, ...
+```
+
+OSTI brings `pydantic>=2.10` as a transitive dependency, so it is not listed separately in `requirements.txt`.
+
+**Key OSTI additions** (beyond the fields already used locally):
+
+| Symbol | Description |
+|--------|-------------|
+| `SCHEMA_VERSION` | Semantic version string (`"0.1.0"`) for schema evolution tracking |
+| `Extension` | Generic extension model (`url`, `name`, typed value fields) |
+| `PageAnnotation` | Page-level annotation model for document markup |
+| `extensions` field | Present on `SessionPlan`, `DrillBlock`, `DiagramInfo` for future extensibility |
+
 ### Peters/Schumacher 2v1 Methodology
 
 The tactical enrichment system is built around the Peters/Schumacher framework from *Two Versus One*:
@@ -253,7 +273,7 @@ drill_blocks
 ├── session_plan_id (FK → session_plans)
 ├── name, setup_description, player_count
 ├── sequence[], coaching_points[], progressions[]
-├── vlm_description, image_ref
+├── description, image_ref
 └── raw_json (JSONB - complete DrillBlock)
 
 tactical_contexts
@@ -310,7 +330,7 @@ soccer-analytics/
 ├── docker-compose.dgx.yml          # DGX GPU services
 ├── Dockerfile.template             # Multi-platform orchestrator image
 ├── Dockerfile.colpali              # ColPali visual retrieval service
-├── requirements.txt                # Common Python dependencies
+├── requirements.txt                # Common Python dependencies (incl. osti)
 ├── requirements.windows.txt        # Windows-specific deps
 ├── requirements.dgx.txt            # DGX-specific deps
 ├── requirements.colpali.txt        # ColPali service deps (byaldi, torch)
@@ -356,8 +376,8 @@ soccer-analytics/
 │   │   ├── pitch.py                # mplsoccer pitch diagram renderer
 │   │   └── pdf_report.py           # reportlab PDF report generator
 │   └── schemas/
-│       ├── session_plan.py         # SessionPlan, DrillBlock models
-│       └── tactical.py             # 2v1 methodology enums
+│       ├── session_plan.py         # Re-exports from osti (SessionPlan, DrillBlock, ...)
+│       └── tactical.py             # Re-exports from osti (TacticalContext, enums)
 ├── tests/
 │   ├── test_schemas.py             # Schema validation + enriched types
 │   ├── test_pipeline.py            # Pipeline + cross-validation tests
@@ -420,6 +440,7 @@ docker compose -f docker-compose.yml -f docker-compose.windows.yml down -v
 - **Phase 2.5** (Complete): Two-pass VLM position extraction for improved player position yield
 - **Phase 3A** (Complete): ColPali/byaldi visual semantic search (text queries, FAISS index)
 - **Phase 3B** (Complete): Validated session plan editing with tactical re-enrichment, PDF export
+- **Phase 4** (Complete): OSTI schema package integration — single source of truth for data models
 
 ## License
 

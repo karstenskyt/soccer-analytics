@@ -105,7 +105,7 @@ def _enrich_drill_tactical_context(drill: DrillBlock) -> DrillBlock:
         [
             drill.name,
             drill.setup.description,
-            drill.diagram.vlm_description,
+            drill.diagram.description,
             " ".join(drill.sequence),
             " ".join(drill.coaching_points),
             " ".join(drill.rules),

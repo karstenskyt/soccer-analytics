@@ -26,7 +26,7 @@ def _make_drill(positions: list[PlayerPosition] | None = None) -> DrillBlock:
 def _make_enriched_drill() -> DrillBlock:
     """Create a DrillBlock with full enriched diagram data."""
     diagram = DiagramInfo(
-        vlm_description="2v1 frontal attack drill",
+        description="2v1 frontal attack drill",
         player_positions=[
             PlayerPosition(label="A1", x=30, y=55, role="attacker"),
             PlayerPosition(label="A2", x=50, y=50, role="attacker"),

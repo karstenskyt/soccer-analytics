@@ -165,7 +165,7 @@ def test_pitch_zone():
 def test_diagram_info_enriched_roundtrip():
     """Test that enriched DiagramInfo survives JSON roundtrip."""
     diagram = DiagramInfo(
-        vlm_description="2v1 frontal attack",
+        description="2v1 frontal attack",
         player_positions=[
             PlayerPosition(label="A1", x=30, y=55, role="attacker"),
         ],

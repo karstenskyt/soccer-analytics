@@ -154,7 +154,7 @@
 <div class="layout">
   <div class="sidebar">
     <h1>Soccer Analytics</h1>
-    <div class="subtitle">Architecture Explorer v0.6.0</div>
+    <div class="subtitle">Architecture Explorer v0.7.0</div>
 
     <h2>Platform</h2>
     <div class="platform-toggle">
@@ -302,7 +302,7 @@ const NODES = [
       sections: [
         { h: 'Description', p: 'Central coordination service running on CPU. Receives PDF uploads, runs the 6-stage pipeline (including ColPali visual indexing), and exposes REST API for querying stored session plans, semantic search, validated editing, and PDF export.' },
         { h: 'Base Image', p: 'python:3.12-slim (no GPU needed \u2014 VLM inference delegated to Ollama via HTTP)' },
-        { h: 'Key Dependencies', items: ['FastAPI >= 0.115', 'Docling >= 2.70 (PDF decomposition)', 'Pydantic >= 2.10 (schema validation)', 'SQLAlchemy[asyncio] >= 2.0', 'httpx >= 0.27 (Ollama + ColPali client)', 'reportlab >= 4.1 (PDF export)', 'OpenCV (cv2) for CV preprocessing'] },
+        { h: 'Key Dependencies', items: ['FastAPI >= 0.115', 'Docling >= 2.70 (PDF decomposition)', 'OSTI (schema package \u2014 brings Pydantic >= 2.10 transitively)', 'SQLAlchemy[asyncio] >= 2.0', 'httpx >= 0.27 (Ollama + ColPali client)', 'reportlab >= 4.1 (PDF export)', 'OpenCV (cv2) for CV preprocessing'] },
         { h: 'API Endpoints', items: ['POST /api/ingest \u2014 Upload & process PDF (6-stage pipeline)', 'GET /api/search?q=...&k=5 \u2014 Semantic visual search', 'GET /api/sessions \u2014 List session plans', 'GET /api/sessions/{id} \u2014 Get by ID', 'PUT /api/sessions/{id} \u2014 Validated update with tactical re-enrichment', 'GET /api/sessions/{id}/export \u2014 Export as coaching PDF', 'GET /api/sessions/{id}/drills \u2014 List drills', 'GET /api/sessions/{id}/drills/{idx}/diagram \u2014 Pitch diagram PNG/PDF', 'POST /api/render \u2014 Ad-hoc diagram rendering', 'GET /health \u2014 Health check'] },
       ],
       tags: [{ text: 'CPU Only', color: 'var(--blue)' }, { text: 'Async', color: 'var(--cyan)' }]
@@ -393,7 +393,7 @@ const NODES = [
         { h: 'Description', p: 'Parses Docling markdown into structured DrillBlock models. Uses header grouping to identify drills and their sub-sections. Merges cross-validated diagram data into each drill.' },
         { h: 'Header Classification', items: ['Drill headers: Component names (e.g. "Coach-Goalkeeper(s)")', 'Sub-section headers: Setup, Sequence, Coaching Points, Variations, Rules', 'Non-drill headers: AUTHORS, PART ONE, ACKNOWLEDGMENT (filtered)'] },
         { h: 'Metadata Extraction', items: ['Title from first # or ## header', 'Category/Difficulty from inline "Category: X Difficulty: Y" pattern', 'Author from ## AUTHORS section or "Author: X" line'] },
-        { h: 'Enriched Types', items: ['PlayerPosition with label, x, y, role, color', 'MovementArrow with start/end coords, arrow_type, from/to labels', 'EquipmentObject, GoalInfo, BallPosition, PitchZone, PitchView'] },
+        { h: 'Enriched Types (OSTI)', items: ['PlayerPosition with label, x, y, role, color', 'MovementArrow with start/end coords, arrow_type, from/to labels', 'EquipmentObject, GoalInfo, BallPosition, PitchZone, PitchView', 'All types defined in osti package, re-exported via src/schemas/'] },
         { h: 'Results', p: 'Session Plan: 4 drills. Two Versus One (40 pages): 17 drills with sub-sections grouped correctly.' },
       ],
       tags: [{ text: 'Pydantic', color: 'var(--green)' }, { text: 'Regex', color: 'var(--text-dim)' }]

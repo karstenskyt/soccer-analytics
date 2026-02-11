@@ -1,4 +1,5 @@
 from .session_plan import (
+    SCHEMA_VERSION,
     SessionPlan,
     SessionMetadata,
     DrillBlock,
@@ -6,6 +7,8 @@ from .session_plan import (
     DiagramInfo,
     PlayerPosition,
     Source,
+    Extension,
+    PageAnnotation,
 )
 from .tactical import (
     TacticalContext,
