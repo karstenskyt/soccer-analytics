@@ -20,6 +20,7 @@ class PitchViewType(str, Enum):
     HALF_PITCH = "half_pitch"
     PENALTY_AREA = "penalty_area"
     THIRD = "third"
+    BETWEEN_HALF_AND_FULL = "between_half_and_full"
     CUSTOM = "custom"
 
 
@@ -45,6 +46,7 @@ class EquipmentType(str, Enum):
     HURDLE = "hurdle"
     MINI_GOAL = "mini_goal"
     FULL_GOAL = "full_goal"
+    AIR_BODY = "air_body"
     FLAG = "flag"
 
 
@@ -154,6 +156,9 @@ class PlayerPosition(BaseModel):
     role: Optional[str] = Field(
         None, description="Role description (e.g., 'goalkeeper', 'attacker')"
     )
+    color: Optional[str] = Field(
+        None, description="Marker color (e.g., 'red', 'green', 'blue', 'yellow')"
+    )
 
 
 class DiagramInfo(BaseModel):
@@ -226,6 +231,14 @@ class DrillBlock(BaseModel):
     progressions: list[str] = Field(
         default_factory=list, description="Progression variations"
     )
+    drill_type: Optional[str] = Field(
+        None,
+        description="Practice structure (e.g., 'Warm-Up', 'Technical Drill', "
+        "'Game-Related Practice', 'Small-Sided Game', 'Phase of Play')",
+    )
+    directional: Optional[bool] = Field(
+        None, description="Whether the drill has a primary direction of attack"
+    )
     tactical_context: Optional[TacticalContext] = Field(
         None, description="Tactical methodology context"
     )
@@ -245,6 +258,10 @@ class SessionMetadata(BaseModel):
     target_age_group: Optional[str] = Field(None, description="Target age group")
     duration_minutes: Optional[int] = Field(
         None, description="Session duration in minutes"
+    )
+    desired_outcome: Optional[str] = Field(
+        None,
+        description="Session-level learning objective or desired outcome",
     )
 
 

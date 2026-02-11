@@ -29,14 +29,15 @@ logger = logging.getLogger(__name__)
 # Sub-section headers that belong WITHIN a drill (not drill names themselves).
 # These patterns are matched case-insensitively against ## headers.
 _SUBSECTION_PATTERNS = [
-    r"^setup(?:\s+and\s+organization)?[:\s]*$",
-    r"^organization[:\s]*$",
+    r"^setup(?:\s+and\s+organi[sz]ation)?[:\s]*$",
+    r"^organi[sz]ation[:\s]*$",
     r"^sequence[:\s]*$",
     r"^process(?:\s+and\s+objectives)?[:\s]*$",
     r"^objectives?[:\s]*$",
     r"^execution[:\s]*$",
     r"^procedure[:\s]*$",
-    r"^progressions?[:\s]*$",
+    r"^progression(?:s|\(s\))?[:\s]*$",
+    r"^regression(?:s|\(s\))?[:\s]*$",
     r"^variations?[:\s]*$",
     r"^coaching\s+(?:points?|tips?|notes?|tasks?)[:\s]*$",
     r"^key\s+points?[:\s]*$",
@@ -73,6 +74,33 @@ _NON_DRILL_RE = re.compile(
 )
 
 
+def _first_line_name(text: str, max_len: int = 60) -> str:
+    """Extract the first meaningful line from text as a drill name."""
+    for line in text.strip().split("\n"):
+        stripped = line.strip()
+        if stripped and not stripped.startswith(("!", "[", "<!--")):
+            if len(stripped) > max_len:
+                return stripped[: max_len - 3] + "..."
+            return stripped
+    return ""
+
+
+def _is_title_card(drill_name: str, title: str) -> bool:
+    """Check if a drill name is just the session title repeated."""
+    a = drill_name.strip().lower().rstrip(":;., ")
+    b = title.strip().lower().rstrip(":;., ")
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if a in b or b in a:
+        return True
+    # First 30 chars match (truncated titles)
+    if len(a) > 20 and len(b) > 20 and a[:30] == b[:30]:
+        return True
+    return False
+
+
 def _is_subsection_header(header_text: str) -> bool:
     """Check if a header is a drill sub-section (Setup, Sequence, etc.)."""
     return bool(_SUBSECTION_RE.match(header_text.strip()))
@@ -86,11 +114,11 @@ def _is_non_drill_header(header_text: str) -> bool:
 def _classify_subsection(header_text: str) -> str:
     """Classify a sub-section header into a canonical field name."""
     h = header_text.strip().lower().rstrip(":")
-    if re.match(r"setup|organization", h):
+    if re.match(r"setup|organi[sz]ation", h):
         return "setup"
     if re.match(r"sequence|execution|procedure|process", h):
         return "sequence"
-    if re.match(r"progression|variation|advance", h):
+    if re.match(r"progression|regression|variation|advance", h):
         return "progressions"
     if re.match(r"coaching|key\s+point", h):
         return "coaching_points"
@@ -124,6 +152,7 @@ def _parse_player_positions(positions_data: list[dict]) -> list[PlayerPosition]:
                     x=x,
                     y=y,
                     role=pos.get("role"),
+                    color=pos.get("color"),
                 )
             )
         except (ValueError, TypeError) as e:
@@ -387,7 +416,18 @@ def _group_drill_sections(
             if current_drill is not None:
                 field = _classify_subsection(clean_header)
                 existing = current_drill["subsections"].get(field, "")
-                if existing:
+                if existing and field == "setup":
+                    # Repeated setup/organisation → new drill block.
+                    drills.append(current_drill)
+                    auto_name = _first_line_name(body)
+                    if not auto_name:
+                        auto_name = f"Section {len(drills) + 1}"
+                    current_drill = {
+                        "name": auto_name,
+                        "body": "",
+                        "subsections": {field: body},
+                    }
+                elif existing:
                     current_drill["subsections"][field] = (
                         existing + "\n" + body
                     )
@@ -445,10 +485,20 @@ def _extract_drill_blocks(
     markdown: str,
     diagram_descriptions: dict[str, dict],
     images: dict[str, Path],
+    session_title: str = "",
 ) -> list[DrillBlock]:
     """Parse drill blocks from markdown content with VLM enrichment."""
     sections = _split_into_header_sections(markdown)
     drill_groups = _group_drill_sections(sections)
+
+    # Filter title-card drill: first group matching session title with no subsections
+    if (
+        drill_groups
+        and session_title
+        and not drill_groups[0]["subsections"]
+        and _is_title_card(drill_groups[0]["name"], session_title)
+    ):
+        drill_groups = drill_groups[1:]
 
     image_keys = list(images.keys())
     image_idx = 0
@@ -664,15 +714,24 @@ async def extract_session_plan(
                 if len(first_sentence) < 100:
                     author = first_sentence.strip()
 
+    # Desired outcome / learning objective
+    desired_outcome = _extract_metadata_field(
+        markdown,
+        r"^(?:Desired\s+Outcome|Learning\s+Objective|Session\s+Objective|Aim)\s*:\s*(.+?)$",
+        max_length=200,
+    )
+
     metadata = SessionMetadata(
         title=title,
         category=category,
         difficulty=difficulty,
         author=author,
+        desired_outcome=desired_outcome,
     )
 
     drills = _extract_drill_blocks(
-        markdown, diagram_descriptions, document.images
+        markdown, diagram_descriptions, document.images,
+        session_title=title,
     )
 
     source = Source(

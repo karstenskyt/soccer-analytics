@@ -83,14 +83,19 @@ async def ingest_pdf(
             vlm=vlm,
         )
 
-        # Stage 2b: Full structured extraction (Pass 2 + conditional Pass 3)
+        # Stage 2b: Multi-pass structured extraction (CV + 4 focused VLM passes)
         if settings.extract_positions:
+            from src.pipeline.cross_validate import cross_validate
+
             structure_data = await extract_diagram_structures(
                 images=document.images,
                 classifications=classifications,
                 max_tokens_pass2=settings.vlm_max_tokens_pass2,
                 vlm=vlm,
             )
+            # Cross-validate each diagram (CV vs VLM conflict resolution)
+            for key, data in structure_data.items():
+                structure_data[key] = cross_validate(data)
             # Merge structure data into classifications for downstream use
             for key, data in structure_data.items():
                 if key in classifications:

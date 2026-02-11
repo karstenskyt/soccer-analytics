@@ -1,12 +1,15 @@
-"""Stage 2: Diagram classification and structured extraction using VLM via Ollama API.
+"""Stage 2: Diagram classification and multi-pass structured extraction.
 
 Pass 1 (Classification): Lightweight check — is this a coaching diagram?
-Pass 2 (Full Structured Extraction): Comprehensive extraction of all diagram elements.
-Pass 3 (Conditional Retry): Focused follow-up if Pass 2 yields sparse results.
+Pass 2a (Players): Focused player extraction with CV context.
+Pass 2b (Arrows): Focused arrow extraction.
+Pass 2c (Equipment+Goals): Focused equipment/goals extraction with CV context.
+Pass 2d (Pitch View): Pitch view classification with CV context.
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -37,6 +40,9 @@ _ROLE_ALIASES: dict[str, str] = {
     "mid": "midfielder",
     "mf": "midfielder",
     "neutral": "neutral",
+    "server": "server",
+    "srv": "server",
+    "coach": "coach",
 }
 
 # ---------------------------------------------------------------------------
@@ -56,52 +62,6 @@ If YES (tactical diagram with player markers, arrows, pitch lines):
 
 If NO (photo, logo, book cover, decorative graphic, text-only):
 {"is_diagram": false, "description": "Brief description of what the image shows"}
-
-Output ONLY the JSON object."""
-
-# ---------------------------------------------------------------------------
-# Pass 2: Full structured extraction prompt
-# ---------------------------------------------------------------------------
-
-EXTRACTION_SYSTEM_PROMPT = (
-    "You are a soccer coaching diagram analyzer that extracts structured data. "
-    "You MUST respond with a single valid JSON object and nothing else. "
-    "No markdown, no explanation, no text before or after the JSON. "
-    "Do NOT use <think> tags. Respond immediately with JSON."
-)
-
-EXTRACTION_PROMPT = """Extract elements from this soccer coaching diagram as JSON.
-Coordinates: x 0-100 (left to right), y 0-100 (bottom/own goal to top/opponent goal).
-
-Roles: A/A1="attacker", D/D1="defender", GK="goalkeeper", N/N1="neutral", S="server", C="coach"
-Arrow types: "run", "pass", "shot", "dribble", "cross", "through_ball", "movement"
-Equipment: "cone", "mannequin", "pole", "gate", "hurdle", "mini_goal", "full_goal", "flag"
-Pitch views: "full_pitch", "half_pitch", "penalty_area", "third", "custom"
-
-Format:
-{"description": "...", "pitch_view": {"view_type": "half_pitch"}, "player_positions": [{"label": "A1", "x": 30, "y": 55, "role": "attacker"}], "arrows": [{"start_x": 30, "start_y": 55, "end_x": 45, "end_y": 75, "arrow_type": "run", "from_label": "A1", "sequence_number": 1}], "equipment": [{"equipment_type": "cone", "x": 25, "y": 45}], "goals": [{"x": 50, "y": 100, "goal_type": "full_goal"}], "balls": [{"x": 50, "y": 50}], "zones": []}
-
-Use empty list [] for elements not visible. Output ONLY the JSON object."""
-
-# ---------------------------------------------------------------------------
-# Pass 3: Focused arrow/equipment retry prompt
-# ---------------------------------------------------------------------------
-
-ARROWS_EQUIPMENT_SYSTEM_PROMPT = (
-    "You are a soccer coaching diagram detail extractor. You MUST respond with a "
-    "single valid JSON object and nothing else. No markdown, no explanation. "
-    "Do NOT use <think> tags. Respond immediately with JSON."
-)
-
-ARROWS_EQUIPMENT_PROMPT = """Look carefully at this soccer coaching diagram and extract ONLY the movement arrows and equipment.
-
-Use the Opta coordinate system (x: 0-100, y: 0-100).
-
-Arrow types: "run" (solid line), "pass" (dashed), "shot" (thick), "dribble" (wavy), "cross", "through_ball", "movement"
-Equipment types: "cone", "mannequin", "pole", "gate", "hurdle", "mini_goal", "full_goal", "flag"
-
-Respond with:
-{"arrows": [{"start_x": 30, "start_y": 55, "end_x": 45, "end_y": 75, "arrow_type": "run", "from_label": "A1"}], "equipment": [{"equipment_type": "cone", "x": 25, "y": 45}], "goals": [{"x": 50, "y": 100, "goal_type": "full_goal"}], "balls": [{"x": 50, "y": 50}], "zones": []}
 
 Output ONLY the JSON object."""
 
@@ -208,7 +168,7 @@ async def _vlm_call(
     system_prompt: str,
     user_prompt: str,
     max_tokens: int = 4096,
-    temperature: float = 0.1,
+    temperature: float = 0.0,
     *,
     vlm: VLMBackend | None = None,
     json_mode: bool = False,
@@ -258,7 +218,7 @@ async def _vlm_call(
     if json_mode:
         payload["format"] = "json"
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=600.0) as client:
         response = await client.post(
             f"{ollama_url}/api/chat",
             json=payload,
@@ -311,6 +271,7 @@ def _validate_positions(raw_positions: list[dict]) -> list[dict]:
             role = _ROLE_ALIASES.get(role, role)
             if role not in (
                 "goalkeeper", "attacker", "defender", "midfielder", "neutral",
+                "server", "coach",
             ):
                 role = None
 
@@ -319,6 +280,7 @@ def _validate_positions(raw_positions: list[dict]) -> list[dict]:
             "x": x,
             "y": y,
             "role": role,
+            "color": pos.get("color"),
         })
 
     return validated
@@ -427,107 +389,255 @@ async def classify_diagrams(
 
 
 # ---------------------------------------------------------------------------
-# Pass 2: Full Structured Extraction
+# Pass 2a: Player extraction (with CV context)
+# ---------------------------------------------------------------------------
+
+PLAYER_SYSTEM_PROMPT = (
+    "You are a soccer coaching diagram analyzer. Extract ONLY player positions. "
+    "You MUST respond with a single valid JSON object and nothing else. "
+    "No markdown, no explanation. Do NOT use <think> tags."
+)
+
+PLAYER_PROMPT_TEMPLATE = """{cv_context}
+
+Using this as a starting point, identify all PLAYERS in the diagram.
+For each player, provide: label (text near the player), x (0-100 left to right),
+y (0-100 bottom/own goal to top/opponent goal), color, role.
+
+Roles: GK="goalkeeper", A/A1="attacker", D/D1="defender", N/N1="neutral", S="server", C="coach"
+
+IMPORTANT: Only count actual player markers (colored circles/icons with labels).
+Do NOT count arrow endpoints, sequence numbers, or text labels as players.
+
+Respond with: {{"players": [{{"label": "GK", "x": 50, "y": 10, "color": "green", "role": "goalkeeper"}}]}}
+Use empty list [] if no players visible."""
+
+
+# ---------------------------------------------------------------------------
+# Pass 2b: Arrow extraction (standalone)
+# ---------------------------------------------------------------------------
+
+ARROW_SYSTEM_PROMPT = (
+    "You are a soccer coaching diagram analyzer. Extract ONLY movement arrows. "
+    "You MUST respond with a single valid JSON object and nothing else. "
+    "No markdown, no explanation. Do NOT use <think> tags."
+)
+
+ARROW_PROMPT = """Extract all movement arrows from this soccer coaching diagram.
+Coordinates: x 0-100 (left to right), y 0-100 (bottom/own goal to top/opponent goal).
+
+Arrow types: "run" (solid line), "pass" (dashed), "shot" (thick/bold),
+"dribble" (wavy), "cross", "through_ball", "movement" (generic)
+
+For each arrow: start position, end position, type, associated player label if visible.
+
+Respond with: {{"arrows": [{{"start_x": 30, "start_y": 55, "end_x": 45, "end_y": 75, "arrow_type": "run", "from_label": "A1", "sequence_number": 1}}]}}
+Use empty list [] if no arrows visible."""
+
+
+# ---------------------------------------------------------------------------
+# Pass 2c: Equipment + Goals (with CV context)
+# ---------------------------------------------------------------------------
+
+EQUIPMENT_SYSTEM_PROMPT = (
+    "You are a soccer coaching diagram analyzer. Extract ONLY equipment and goals. "
+    "You MUST respond with a single valid JSON object and nothing else. "
+    "No markdown, no explanation. Do NOT use <think> tags."
+)
+
+EQUIPMENT_PROMPT_TEMPLATE = """Computer vision detected {circle_count} colored circles in this diagram. Those are PLAYERS, not equipment.
+Now identify all EQUIPMENT and GOALS separately.
+
+Equipment types: "cone" (small triangle), "mannequin"/"dummy" (human-shaped figure),
+"pole", "gate" (two cones with a line between), "hurdle", "mini_goal", "flag"
+Goal types: "full_goal" (full-size goal with posts/net)
+
+For each item: type, x (0-100), y (0-100), color if visible.
+Goals MUST go in "goals", everything else in "equipment".
+
+Respond with: {{"equipment": [{{"equipment_type": "mannequin", "x": 40, "y": 60, "color": "blue"}}], "goals": [{{"x": 50, "y": 100, "goal_type": "full_goal"}}]}}
+Use empty lists [] if nothing visible."""
+
+
+# ---------------------------------------------------------------------------
+# Pass 2d: Pitch view classification (with CV context)
+# ---------------------------------------------------------------------------
+
+PITCH_VIEW_SYSTEM_PROMPT = (
+    "You are a soccer pitch view classifier. "
+    "You MUST respond with a single valid JSON object and nothing else. "
+    "No markdown, no explanation. Do NOT use <think> tags."
+)
+
+PITCH_VIEW_PROMPT_TEMPLATE = """{cv_pitch_info}
+
+Classify the portion of the soccer pitch shown in this diagram:
+- "penalty_area" — shows only the area around one goal (18-yard box visible)
+- "third" — shows approximately one third of the pitch (attacking/defending third)
+- "half_pitch" — shows one half of the full pitch (center line visible)
+- "full_pitch" — shows the entire pitch with both goals
+- "custom" — non-standard or unclear
+
+Respond with: {{"pitch_view": {{"view_type": "penalty_area"}}}}"""
+
+
+# ---------------------------------------------------------------------------
+# Multi-pass extraction functions
 # ---------------------------------------------------------------------------
 
 
-async def extract_diagram_structure(
+async def _extract_players(
     image_path: Path,
-    ollama_url: str = "",
-    model: str = "",
-    max_tokens: int = 8192,
+    cv_context: str,
     *,
     vlm: VLMBackend | None = None,
-) -> dict:
-    """Pass 2: Extract full structured data from a confirmed diagram.
-
-    Returns dict with player_positions, arrows, equipment, goals, balls, zones, pitch_view.
-    """
-    try:
-        content = await _vlm_call(
-            image_path, ollama_url, model,
-            system_prompt=EXTRACTION_SYSTEM_PROMPT,
-            user_prompt=EXTRACTION_PROMPT,
-            max_tokens=max_tokens,
-            vlm=vlm,
-        )
-        parsed = _extract_json_from_text(content)
-
-        # Retry with thinking-suppressed prompt if first attempt fails
-        if parsed is None:
-            logger.info(f"Pass 2: Retrying {image_path.name} with no-think prompt")
-            content = await _vlm_call(
-                image_path, ollama_url, model,
-                system_prompt=EXTRACTION_SYSTEM_PROMPT + _NO_THINK_SUFFIX,
-                user_prompt=EXTRACTION_PROMPT,
-                max_tokens=max_tokens,
-                vlm=vlm,
-            )
-            parsed = _extract_json_from_text(content)
-
-        if parsed is None:
-            logger.warning(
-                f"Pass 2: Could not parse JSON for {image_path.name}. "
-                f"Raw VLM output (first 500 chars): {content[:500]}"
-            )
-            return {}
-
-        # Validate player positions
-        raw_positions = parsed.get("player_positions", [])
-        if isinstance(raw_positions, list):
-            parsed["player_positions"] = _validate_positions(raw_positions)
-
-        return parsed
-
-    except Exception as e:
-        logger.error(f"Pass 2: Failed for {image_path.name}: {e}")
-        return {}
-
-
-# ---------------------------------------------------------------------------
-# Pass 3: Conditional arrow/equipment retry
-# ---------------------------------------------------------------------------
-
-
-async def extract_arrows_equipment(
-    image_path: Path,
     ollama_url: str = "",
     model: str = "",
     max_tokens: int = 4096,
-    *,
-    vlm: VLMBackend | None = None,
-) -> dict:
-    """Pass 3: Focused extraction of arrows and equipment only.
+) -> list[dict]:
+    """Pass 2a: Extract player positions with CV context."""
+    prompt = PLAYER_PROMPT_TEMPLATE.format(cv_context=cv_context)
 
-    Used as a follow-up when Pass 2 found players but sparse arrows/equipment.
-    """
-    try:
+    content = await _vlm_call(
+        image_path, ollama_url, model,
+        system_prompt=PLAYER_SYSTEM_PROMPT,
+        user_prompt=prompt,
+        max_tokens=max_tokens,
+        vlm=vlm,
+        json_mode=True,
+    )
+    parsed = _extract_json_from_text(content)
+    if parsed is None:
+        # Retry with no-think suffix
         content = await _vlm_call(
             image_path, ollama_url, model,
-            system_prompt=ARROWS_EQUIPMENT_SYSTEM_PROMPT,
-            user_prompt=ARROWS_EQUIPMENT_PROMPT,
+            system_prompt=PLAYER_SYSTEM_PROMPT + _NO_THINK_SUFFIX,
+            user_prompt=prompt,
+            max_tokens=max_tokens,
+            vlm=vlm,
+            json_mode=True,
+        )
+        parsed = _extract_json_from_text(content)
+
+    if parsed is None or not isinstance(parsed, dict):
+        logger.warning(f"Pass 2a: Could not parse players for {image_path.name}")
+        return []
+
+    raw = parsed.get("players", [])
+    return _validate_positions(raw) if isinstance(raw, list) else []
+
+
+async def _extract_arrows(
+    image_path: Path,
+    *,
+    vlm: VLMBackend | None = None,
+    ollama_url: str = "",
+    model: str = "",
+    max_tokens: int = 4096,
+) -> list[dict]:
+    """Pass 2b: Extract movement arrows."""
+    content = await _vlm_call(
+        image_path, ollama_url, model,
+        system_prompt=ARROW_SYSTEM_PROMPT,
+        user_prompt=ARROW_PROMPT,
+        max_tokens=max_tokens,
+        vlm=vlm,
+    )
+    parsed = _extract_json_from_text(content)
+    if parsed is None:
+        content = await _vlm_call(
+            image_path, ollama_url, model,
+            system_prompt=ARROW_SYSTEM_PROMPT + _NO_THINK_SUFFIX,
+            user_prompt=ARROW_PROMPT,
             max_tokens=max_tokens,
             vlm=vlm,
         )
         parsed = _extract_json_from_text(content)
 
-        if parsed is None:
-            logger.warning(f"Pass 3: Could not parse JSON for {image_path.name}")
-            return {}
+    if parsed is None or not isinstance(parsed, dict):
+        logger.warning(f"Pass 2b: Could not parse arrows for {image_path.name}")
+        return []
 
-        return parsed
-
-    except Exception as e:
-        logger.error(f"Pass 3: Failed for {image_path.name}: {e}")
-        return {}
+    return parsed.get("arrows", []) if isinstance(parsed.get("arrows"), list) else []
 
 
-def _is_sparse_result(data: dict) -> bool:
-    """Check if Pass 2 result has players but sparse arrows/equipment."""
-    has_players = len(data.get("player_positions", [])) > 0
-    has_arrows = len(data.get("arrows", [])) > 0
-    has_equipment = len(data.get("equipment", [])) > 0
-    return has_players and not has_arrows and not has_equipment
+async def _extract_equipment_goals(
+    image_path: Path,
+    circle_count: int,
+    *,
+    vlm: VLMBackend | None = None,
+    ollama_url: str = "",
+    model: str = "",
+    max_tokens: int = 4096,
+) -> dict:
+    """Pass 2c: Extract equipment and goals."""
+    prompt = EQUIPMENT_PROMPT_TEMPLATE.format(circle_count=circle_count)
+
+    content = await _vlm_call(
+        image_path, ollama_url, model,
+        system_prompt=EQUIPMENT_SYSTEM_PROMPT,
+        user_prompt=prompt,
+        max_tokens=max_tokens,
+        vlm=vlm,
+    )
+    parsed = _extract_json_from_text(content)
+    if parsed is None:
+        content = await _vlm_call(
+            image_path, ollama_url, model,
+            system_prompt=EQUIPMENT_SYSTEM_PROMPT + _NO_THINK_SUFFIX,
+            user_prompt=prompt,
+            max_tokens=max_tokens,
+            vlm=vlm,
+        )
+        parsed = _extract_json_from_text(content)
+
+    if parsed is None or not isinstance(parsed, dict):
+        logger.warning(f"Pass 2c: Could not parse equipment for {image_path.name}")
+        return {"equipment": [], "goals": []}
+
+    return {
+        "equipment": parsed.get("equipment", []),
+        "goals": parsed.get("goals", []),
+    }
+
+
+async def _extract_pitch_view(
+    image_path: Path,
+    cv_pitch_info: str,
+    *,
+    vlm: VLMBackend | None = None,
+    ollama_url: str = "",
+    model: str = "",
+    max_tokens: int = 1024,
+) -> dict | None:
+    """Pass 2d: Classify pitch view."""
+    prompt = PITCH_VIEW_PROMPT_TEMPLATE.format(cv_pitch_info=cv_pitch_info)
+
+    content = await _vlm_call(
+        image_path, ollama_url, model,
+        system_prompt=PITCH_VIEW_SYSTEM_PROMPT,
+        user_prompt=prompt,
+        max_tokens=max_tokens,
+        vlm=vlm,
+        json_mode=True,
+    )
+    parsed = _extract_json_from_text(content)
+    if parsed is None:
+        content = await _vlm_call(
+            image_path, ollama_url, model,
+            system_prompt=PITCH_VIEW_SYSTEM_PROMPT + _NO_THINK_SUFFIX,
+            user_prompt=prompt,
+            max_tokens=max_tokens,
+            vlm=vlm,
+            json_mode=True,
+        )
+        parsed = _extract_json_from_text(content)
+
+    if parsed is None or not isinstance(parsed, dict):
+        logger.warning(f"Pass 2d: Could not parse pitch view for {image_path.name}")
+        return None
+
+    return parsed.get("pitch_view")
 
 
 async def extract_diagram_structures(
@@ -535,21 +645,23 @@ async def extract_diagram_structures(
     classifications: dict[str, dict],
     ollama_url: str = "",
     model: str = "",
-    max_tokens_pass2: int = 8192,
-    max_tokens_pass3: int = 4096,
+    max_tokens_pass2: int = 4096,
     *,
     vlm: VLMBackend | None = None,
 ) -> dict[str, dict]:
-    """Run Pass 2 (+ conditional Pass 3) on all confirmed diagrams.
+    """Run multi-pass extraction on all confirmed diagrams.
 
-    Only processes images where is_diagram=True in classifications.
-    Merges Pass 2 classification description into results.
+    For each diagram:
+    1. CV preprocessing (sync, <100ms)
+    2. 4 focused VLM passes in parallel (2a: players, 2b: arrows, 2c: equipment, 2d: pitch view)
+    3. Merge results into unified dict
 
     Returns dict of image_key -> enriched structure data.
     """
+    from .cv_preprocess import analyze_diagram, format_cv_context
+
     results: dict[str, dict] = {}
     diagram_count = 0
-    pass3_count = 0
 
     for key, image_path in images.items():
         classification = classifications.get(key, {})
@@ -557,40 +669,82 @@ async def extract_diagram_structures(
             continue
 
         diagram_count += 1
-        logger.info(f"Pass 2: Extracting structure from {key}")
+        logger.info(f"Extracting structure from {key} (multi-pass + CV)")
 
-        data = await extract_diagram_structure(
-            image_path, ollama_url, model, max_tokens=max_tokens_pass2, vlm=vlm,
+        # Stage 1: CV preprocessing
+        cv_analysis = analyze_diagram(image_path)
+        logger.info(
+            f"  CV detected {len(cv_analysis.circles)} circles: "
+            f"{cv_analysis.circles_by_color}, view={cv_analysis.estimated_pitch_view}"
         )
 
-        # Carry forward the Pass 1 description if Pass 2 didn't provide one
-        if not data.get("description") and classification.get("description"):
-            data["description"] = classification["description"]
-
-        # Pass 3: conditional retry for sparse results
-        if _is_sparse_result(data):
-            logger.info(f"Pass 3: Sparse result for {key}, retrying arrows/equipment")
-            pass3_count += 1
-            extra = await extract_arrows_equipment(
-                image_path, ollama_url, model, max_tokens=max_tokens_pass3, vlm=vlm,
+        # Build CV context strings for VLM prompts
+        cv_context = format_cv_context(cv_analysis)
+        if cv_analysis.estimated_pitch_view:
+            cv_pitch_info = (
+                f"Pitch line analysis suggests this may be: "
+                f"{cv_analysis.estimated_pitch_view}"
             )
-            # Merge Pass 3 results into Pass 2 data
-            for field in ("arrows", "equipment", "goals", "balls", "zones"):
-                if extra.get(field) and not data.get(field):
-                    data[field] = extra[field]
+        else:
+            cv_pitch_info = (
+                "No strong pitch line pattern detected by computer vision."
+            )
 
-        positions_count = len(data.get("player_positions", []))
-        arrows_count = len(data.get("arrows", []))
-        equipment_count = len(data.get("equipment", []))
+        # Stage 2: 4 focused VLM passes in parallel
+        players_task = _extract_players(
+            image_path, cv_context,
+            vlm=vlm, ollama_url=ollama_url, model=model,
+            max_tokens=max_tokens_pass2,
+        )
+        arrows_task = _extract_arrows(
+            image_path,
+            vlm=vlm, ollama_url=ollama_url, model=model,
+            max_tokens=max_tokens_pass2,
+        )
+        equipment_task = _extract_equipment_goals(
+            image_path, len(cv_analysis.circles),
+            vlm=vlm, ollama_url=ollama_url, model=model,
+            max_tokens=max_tokens_pass2,
+        )
+        pitch_view_task = _extract_pitch_view(
+            image_path, cv_pitch_info,
+            vlm=vlm, ollama_url=ollama_url, model=model,
+        )
+
+        players, arrows, eq_goals, pitch_view = await asyncio.gather(
+            players_task, arrows_task, equipment_task, pitch_view_task,
+        )
+
+        # Merge into unified structure dict
+        data: dict = {
+            "description": classification.get("description", ""),
+            "player_positions": players,
+            "arrows": arrows,
+            "equipment": eq_goals.get("equipment", []),
+            "goals": eq_goals.get("goals", []),
+            "balls": [],
+            "zones": [],
+            "pitch_view": pitch_view,
+            # Attach CV analysis for cross-validation
+            "_cv_analysis": {
+                "circles_by_color": cv_analysis.circles_by_color,
+                "total_circles": len(cv_analysis.circles),
+                "estimated_pitch_view": cv_analysis.estimated_pitch_view,
+                "circles": [
+                    {"x": c.x, "y": c.y, "color": c.color_name}
+                    for c in cv_analysis.circles
+                ],
+            },
+        }
+
         logger.info(
-            f"  {key}: {positions_count} players, {arrows_count} arrows, "
-            f"{equipment_count} equipment items"
+            f"  {key}: {len(players)} players, {len(arrows)} arrows, "
+            f"{len(eq_goals.get('equipment', []))} equipment, "
+            f"{len(eq_goals.get('goals', []))} goals, "
+            f"view={pitch_view}"
         )
 
         results[key] = data
 
-    logger.info(
-        f"Pass 2 complete: {diagram_count} diagrams processed, "
-        f"{pass3_count} needed Pass 3 retry"
-    )
+    logger.info(f"Multi-pass extraction complete: {diagram_count} diagrams")
     return results

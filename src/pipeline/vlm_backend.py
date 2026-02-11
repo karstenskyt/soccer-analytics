@@ -34,7 +34,7 @@ class VLMBackend(Protocol):
         system_prompt: str,
         user_prompt: str,
         max_tokens: int = 4096,
-        temperature: float = 0.1,
+        temperature: float = 0.0,
         json_mode: bool = False,
     ) -> VLMResponse:
         """Send an image + prompt to the VLM and return the response."""
@@ -44,7 +44,7 @@ class VLMBackend(Protocol):
 class OllamaBackend:
     """VLM backend using a local Ollama instance."""
 
-    def __init__(self, base_url: str, model: str, timeout: float = 120.0):
+    def __init__(self, base_url: str, model: str, timeout: float = 600.0):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
@@ -55,7 +55,7 @@ class OllamaBackend:
         system_prompt: str,
         user_prompt: str,
         max_tokens: int = 4096,
-        temperature: float = 0.1,
+        temperature: float = 0.0,
         json_mode: bool = False,
     ) -> VLMResponse:
         image_bytes = image_path.read_bytes()

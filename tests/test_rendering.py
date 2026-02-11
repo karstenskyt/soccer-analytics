@@ -1,6 +1,6 @@
 """Tests for pitch diagram rendering."""
 
-from src.rendering.pitch import _color_for_role, render_drill_diagram
+from src.rendering.pitch import _color_for_role, _color_for_player, render_drill_diagram
 from src.schemas.session_plan import (
     DiagramInfo,
     DrillBlock,
@@ -119,6 +119,45 @@ def test_role_colors_case_insensitive():
     assert _color_for_role("  Defender  ") == "#C62828"
 
 
+# --- Player color tests ---
+
+
+def test_color_for_player_prefers_explicit_color():
+    """Explicit player color takes priority over role color."""
+    pos = PlayerPosition(label="A1", x=30, y=55, role="attacker", color="red")
+    assert _color_for_player(pos) == "#C62828"
+
+
+def test_color_for_player_falls_back_to_role():
+    """Without explicit color, falls back to role-based color."""
+    pos = PlayerPosition(label="A1", x=30, y=55, role="attacker")
+    assert _color_for_player(pos) == "#1565C0"
+
+
+def test_color_for_player_unknown_color_falls_back():
+    """Unknown explicit color falls back to role-based color."""
+    pos = PlayerPosition(label="A1", x=30, y=55, role="attacker", color="magenta")
+    assert _color_for_player(pos) == "#1565C0"
+
+
+def test_color_for_player_no_role_no_color():
+    """No role and no color returns default."""
+    pos = PlayerPosition(label="X", x=50, y=50)
+    assert _color_for_player(pos) == "#1565C0"
+
+
+def test_drill_with_colored_players_renders():
+    """Players with explicit colors should render valid PNG."""
+    positions = [
+        PlayerPosition(label="A1", x=30, y=60, role="attacker", color="red"),
+        PlayerPosition(label="D1", x=70, y=40, role="defender", color="blue"),
+        PlayerPosition(label="GK", x=50, y=5, role="goalkeeper", color="green"),
+    ]
+    result = render_drill_diagram(_make_drill(positions))
+    assert _is_png(result)
+    assert len(result) > 1000
+
+
 # --- Enriched rendering tests ---
 
 
@@ -176,3 +215,51 @@ def test_drill_with_zones_and_balls():
     drill = DrillBlock(name="Zones and Balls", diagram=diagram)
     result = render_drill_diagram(drill)
     assert _is_png(result)
+
+
+# --- Gemini fixture rendering tests ---
+
+
+from src.schemas.session_plan import SessionPlan
+from tests.fixtures.gemini_extractions import (
+    GEMINI_GKNEXUS,
+    GEMINI_NIELSEN,
+    GEMINI_ROBERTS,
+    GEMINI_WHEDDON,
+)
+
+
+def test_gemini_gknexus_screen5_renders():
+    """GkNexus Screen 5 (6-server bombardment) renders valid PNG."""
+    plan = SessionPlan.model_validate(GEMINI_GKNEXUS)
+    drill = plan.drills[1]  # Screen 5: 6-Server Bombardment
+    result = render_drill_diagram(drill)
+    assert _is_png(result)
+    assert len(result) > 5000
+
+
+def test_gemini_nielsen_setup3_renders():
+    """Nielsen Setup 3 (4v4+3 with zones) renders valid PNG."""
+    plan = SessionPlan.model_validate(GEMINI_NIELSEN)
+    drill = plan.drills[1]  # Setup 3: 4v4+3 to Goals with Zones
+    result = render_drill_diagram(drill)
+    assert _is_png(result)
+    assert len(result) > 5000
+
+
+def test_gemini_roberts_cutback_renders():
+    """Roberts cutback crossing drill renders valid PNG."""
+    plan = SessionPlan.model_validate(GEMINI_ROBERTS)
+    drill = plan.drills[0]
+    result = render_drill_diagram(drill)
+    assert _is_png(result)
+    assert len(result) > 5000
+
+
+def test_gemini_wheddon_handling_renders():
+    """Wheddon angled shot-stopping drill renders valid PNG."""
+    plan = SessionPlan.model_validate(GEMINI_WHEDDON)
+    drill = plan.drills[0]
+    result = render_drill_diagram(drill)
+    assert _is_png(result)
+    assert len(result) > 5000

@@ -49,11 +49,16 @@ PDF Upload ──> FastAPI Orchestrator (:8004)
                   ├─ Stage 1: Docling PDF Decomposition (CPU)
                   │     └─ Markdown text + extracted diagram images
                   │
-                  ├─ Stage 2: VLM Diagram Analysis (Pass 1)
-                  │     └─ Qwen3-VL via Ollama (:11434, GPU)
+                  ├─ Stage 2: VLM Classification (Pass 1, GPU)
+                  │     └─ Qwen3-VL via Ollama (:11434) — diagram vs non-diagram
                   │
-                  ├─ Stage 2b: Position Extraction (Pass 2)
-                  │     └─ Focused VLM pass on confirmed diagrams
+                  ├─ Stage 2b: Multi-Pass Structured Extraction (GPU + CPU)
+                  │     ├─ CV Preprocessing (CPU, OpenCV) — circle detection, pitch lines
+                  │     ├─ Pass 2a: Player extraction (VLM + CV context)  ─┐
+                  │     ├─ Pass 2b: Arrow extraction (VLM)                 ├─ parallel
+                  │     ├─ Pass 2c: Equipment + Goals (VLM + CV context)   │
+                  │     ├─ Pass 2d: Pitch view classification (VLM + CV)  ─┘
+                  │     └─ Cross-validation (CV vs VLM conflict resolution)
                   │
                   ├─ Stage 3: Schema Extraction
                   │     └─ Regex + header grouping → Pydantic models
@@ -182,13 +187,25 @@ Pitch diagrams are rendered using [mplsoccer](https://mplsoccer.readthedocs.io/)
 
 [Docling](https://github.com/DS4SD/docling) `DocumentConverter` extracts markdown text and diagram images from the PDF. OCR is enabled for scanned documents. Images are saved as PNG at 2x resolution.
 
-### Stage 2: VLM Diagram Analysis (Two-Pass)
+### Stage 2: VLM Diagram Classification (Pass 1)
 
-**Pass 1 — Classification:** Each extracted image is sent to [Qwen3-VL](https://huggingface.co/Qwen/Qwen3-VL-8B) (8B) running on Ollama via the native `/api/chat` endpoint. The VLM classifies images as tactical diagrams or non-diagrams (photos, logos) and provides a brief description. Uses `json_mode` for reliable structured output.
+Each extracted image is sent to [Qwen3-VL](https://huggingface.co/Qwen/Qwen3-VL-8B) (8B) running on Ollama via the native `/api/chat` endpoint. The VLM classifies images as tactical diagrams or non-diagrams (photos, logos) and provides a brief description. Uses `json_mode` for reliable structured output. Retry with `<think>`-suppressed prompt on parse failure.
 
-**Pass 2 — Full Structured Extraction (Stage 2b):** A comprehensive VLM pass runs only on confirmed diagrams (`is_diagram=true`) to extract all diagram elements: player positions, movement arrows, equipment, goals, balls, pitch zones, and pitch view type. Uses Opta coordinates (0–100) and label-to-role mapping (A→attacker, D→defender, GK→goalkeeper, N→neutral). All elements are validated (clamped to bounds, deduplicated, roles standardized) and merged into diagram descriptions before Stage 3. Configurable via `EXTRACT_POSITIONS` env var (default: `true`).
+### Stage 2b: Multi-Pass Structured Extraction
 
-**Pass 3 — Conditional Retry:** If Pass 2 detects players but no arrows or equipment, a focused follow-up prompt extracts just the missing elements. Bounds worst case at 3 VLM calls per diagram.
+Runs only on confirmed diagrams (`is_diagram=true`). Combines CPU-based computer vision preprocessing with 4 focused VLM passes running in parallel, followed by cross-validation:
+
+1. **CV Preprocessing** (CPU, <100ms) — OpenCV detects colored circular markers (players), estimates pitch view from line patterns (Hough transform), and identifies background type. Results are injected as context into VLM prompts to improve accuracy.
+
+2. **4 Parallel VLM Passes:**
+   - **Pass 2a — Players:** Extracts player positions with CV context (circle counts and positions). Opta coordinates (0–100), label-to-role mapping (A→attacker, D→defender, GK→goalkeeper, N→neutral).
+   - **Pass 2b — Arrows:** Extracts movement arrows with type classification (run, pass, shot, dribble, cross, through_ball, movement).
+   - **Pass 2c — Equipment + Goals:** Extracts equipment and goals with CV context (circle count tells VLM what is *not* equipment).
+   - **Pass 2d — Pitch View:** Classifies pitch view type (full_pitch, half_pitch, penalty_area, third) with CV line analysis context.
+
+3. **Cross-Validation** — Resolves CV vs VLM conflicts: fills missing player colors from CV circles, falls back to CV pitch view when VLM returns null, moves misclassified goals from equipment array, removes degenerate arrows (start ≈ end).
+
+All elements are validated (clamped to 0–100 bounds, deduplicated, roles standardized) before merging. Configurable via `EXTRACT_POSITIONS` env var (default: `true`).
 
 ### Stage 3: Schema Extraction
 
@@ -303,8 +320,11 @@ soccer-analytics/
 ├── .env.windows.example            # Windows env template
 ├── .env.dgx.example                # DGX env template
 ├── architecture.html               # Interactive architecture diagram
+├── conftest.py                     # Root pytest guard (venv check)
 ├── scripts/
-│   └── init-db.sql                 # Database schema
+│   ├── init-db.sql                 # Database schema
+│   ├── compare_ground_truth.py     # Compare ingested plans vs gold standard
+│   └── export_plans.py             # Export stored session plans as JSON
 ├── src/
 │   ├── api/
 │   │   ├── main.py                 # FastAPI app + lifespan
@@ -325,11 +345,13 @@ soccer-analytics/
 │   │   └── server.py               # MCP stdio server (5 tools)
 │   ├── pipeline/
 │   │   ├── decompose.py            # Stage 1: Docling PDF decomposition
-│   │   ├── describe.py             # Stage 2 + 2b: VLM diagram analysis & extraction
+│   │   ├── describe.py             # Stage 2: Multi-pass VLM diagram analysis
 │   │   ├── extract.py              # Stage 3: Schema extraction
 │   │   ├── validate.py             # Stage 4: Tactical enrichment
 │   │   ├── store.py                # Stage 5: PostgreSQL storage
-│   │   └── vlm_backend.py          # Swappable VLM backend (Ollama native API)
+│   │   ├── vlm_backend.py          # Swappable VLM backend (Protocol pattern)
+│   │   ├── cv_preprocess.py        # OpenCV circle/line/background detection
+│   │   └── cross_validate.py       # CV ↔ VLM conflict resolution (5 rules)
 │   ├── rendering/
 │   │   ├── pitch.py                # mplsoccer pitch diagram renderer
 │   │   └── pdf_report.py           # reportlab PDF report generator
@@ -337,15 +359,18 @@ soccer-analytics/
 │       ├── session_plan.py         # SessionPlan, DrillBlock models
 │       └── tactical.py             # 2v1 methodology enums
 ├── tests/
-│   ├── test_schemas.py
-│   ├── test_pipeline.py
+│   ├── test_schemas.py             # Schema validation + enriched types
+│   ├── test_pipeline.py            # Pipeline + cross-validation tests
 │   ├── test_rendering.py           # Pitch rendering unit tests
 │   ├── test_pdf_report.py          # PDF report generation tests
 │   ├── test_mcp.py                 # MCP tool unit tests (mocked)
 │   ├── test_colpali.py             # ColPali IndexManager unit tests
 │   ├── test_search.py              # Search endpoint unit tests
 │   ├── test_sessions_update.py     # Session update endpoint tests
-│   └── test_api.py
+│   ├── test_api.py                 # API integration tests
+│   └── fixtures/                   # Ground truth + VLM extraction data
+│       ├── ground_truth.py         # Hand-verified drill element counts
+│       └── gemini_extractions.py   # Reference VLM extraction outputs
 └── documents/                      # Sample PDFs for testing
 ```
 

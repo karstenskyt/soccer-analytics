@@ -22,6 +22,7 @@ for mod in _DOCKER_ONLY_MODULES:
         sys.modules[mod] = MagicMock()
 
 from src.pipeline.describe import _extract_json_from_text, _validate_positions
+from src.pipeline.cross_validate import cross_validate
 from src.pipeline.extract import (
     _parse_player_positions,
     _parse_pitch_view,
@@ -30,6 +31,13 @@ from src.pipeline.extract import (
     _parse_goals,
     _parse_balls,
     _parse_zones,
+    _is_subsection_header,
+    _classify_subsection,
+    _is_title_card,
+    _first_line_name,
+    _split_into_header_sections,
+    _group_drill_sections,
+    _extract_drill_blocks,
 )
 from src.pipeline.validate import (
     _detect_game_element,
@@ -114,6 +122,28 @@ def test_validate_positions_standardizes_roles():
     assert result[1]["role"] == "attacker"
     assert result[2]["role"] == "defender"
     assert result[3]["role"] is None  # unknown role → None
+
+
+def test_validate_positions_accepts_server_coach():
+    raw = [
+        {"label": "S1", "x": 50, "y": 50, "role": "server"},
+        {"label": "C", "x": 20, "y": 20, "role": "coach"},
+        {"label": "S2", "x": 60, "y": 60, "role": "srv"},
+    ]
+    result = _validate_positions(raw)
+    assert result[0]["role"] == "server"
+    assert result[1]["role"] == "coach"
+    assert result[2]["role"] == "server"
+
+
+def test_validate_positions_preserves_color():
+    raw = [
+        {"label": "A1", "x": 30, "y": 60, "role": "attacker", "color": "red"},
+        {"label": "D1", "x": 40, "y": 70, "role": "defender"},
+    ]
+    result = _validate_positions(raw)
+    assert result[0]["color"] == "red"
+    assert result[1]["color"] is None
 
 
 def test_validate_positions_deduplicates():
@@ -322,3 +352,353 @@ def test_parse_zones_clamps_coords():
     assert zones[0].y1 == 0.0
     assert zones[0].x2 == 100.0
     assert zones[0].y2 == 100.0
+
+
+# --- Subsection pattern matching tests ---
+
+
+def test_subsection_matches_british_organisation():
+    assert _is_subsection_header("Organisation")
+    assert _is_subsection_header("Organisation:")
+    assert _is_subsection_header("organization")
+    assert _is_subsection_header("Organization:")
+
+
+def test_subsection_matches_progression_with_parens():
+    assert _is_subsection_header("Progression(s)")
+    assert _is_subsection_header("Progression(s):")
+    assert _is_subsection_header("Progressions")
+    assert _is_subsection_header("Progression")
+
+
+def test_subsection_matches_regression():
+    assert _is_subsection_header("Regression")
+    assert _is_subsection_header("Regressions")
+    assert _is_subsection_header("Regression(s)")
+
+
+def test_classify_subsection_british_spelling():
+    assert _classify_subsection("Organisation") == "setup"
+    assert _classify_subsection("Organisation:") == "setup"
+    assert _classify_subsection("organization") == "setup"
+
+
+def test_classify_subsection_regression():
+    assert _classify_subsection("Regression") == "progressions"
+    assert _classify_subsection("Regressions") == "progressions"
+
+
+def test_first_line_name():
+    assert _first_line_name("Screen 1: Warm-up drill\nMore details") == "Screen 1: Warm-up drill"
+    assert _first_line_name("") == ""
+    assert _first_line_name("A" * 100) == "A" * 57 + "..."
+
+
+def test_is_title_card():
+    assert _is_title_card("My Session Plan", "My Session Plan")
+    assert _is_title_card("ANGK - METHODOLOGY - CUTBACKS", "ANGK - METHODOLOGY - CUTBACKS FRONT POST AREA")
+    assert not _is_title_card("COACH-GK(S) 1", "ANGK - METHODOLOGY")
+    assert not _is_title_card("", "Some Title")
+
+
+# --- Drill count tests (representative markdown for each session plan format) ---
+
+
+# GkNexus: 5 Organisation/Progression(s) pairs under a title header → 5 drills
+_GKNEXUS_MARKDOWN = """\
+## Crossing session for GK: dealing with serves across goal
+
+Category: Goalkeeping: Crossing/High balls Difficulty: Moderate
+
+## Organisation
+
+Screen 1: Warm-up handling drill with cones on each side of penalty area.
+GK works with coach on basic handling, footwork, and positioning.
+
+## Progression(s)
+
+Add a second server from the opposite side. Increase serve speed.
+
+## Organisation
+
+Screen 2: Two GKs work alternating. Server from the 6-yard box area.
+Focus on set position and shot-stopping angles.
+
+## Progression(s)
+
+Server can now move closer to create tighter angles.
+
+## Organisation
+
+Screen 3: 6-Server bombardment in arc around penalty area.
+GK faces rapid-fire shots with recovery between saves.
+
+## Progression(s)
+
+Reduce recovery time between saves, add rebounds.
+
+## Organisation
+
+Screen 4: Central and wide servers combined.
+GK transitions between central and angled saves.
+
+## Progression(s)
+
+Add a live attacker who can follow up on rebounds.
+
+## Organisation
+
+Screen 5: Full game scenario with 3v3 in the box.
+GK faces realistic game situations with crossing and finishing.
+
+## Progression(s)
+
+Make it 4v4, require minimum 3 passes before shot.
+"""
+
+
+def test_gknexus_drill_count():
+    """GkNexus plan: 5 Organisation/Progression(s) pairs → 5 drills."""
+    drills = _extract_drill_blocks(
+        _GKNEXUS_MARKDOWN, {}, {},
+        session_title="Crossing session for GK: dealing with serves across goal",
+    )
+    assert len(drills) == 5
+
+
+# Ashley Roberts: title card + 4 real drills → 4 drills
+_ROBERTS_MARKDOWN = """\
+## ANGK - METHODOLOGY - CUTBACKS FRONT POST AREA
+
+Category: Goalkeeping: Crossing/High balls Skill: Mixed age
+
+## COACH-GK(S) 1
+
+TECHNICAL ACTIVATION 1: FUN GAME
+Exercise used as fun, competitive intro into the topic.
+Servers will look to play into the small goal with the GKs looking to cut out.
+
+## COACH-GK(S) 2
+
+TECHNICAL ACTIVATION 2:
+Movement into line with server/the ball. Deal with cutback/volley.
+Recover onto feet, cutback into position.
+
+## COACH-GK-FIELD PLAYERS
+
+FIELD PLAYERS: WAVE PRACTICE- Unopposed to start.
+Teams advance towards opposition goal within set amount of time.
+Award 2 points for finish on goal from front post area.
+
+## GAME:
+
+Small-sided game 7v7.
+Focus on outfield players looking to score from cutback scenarios.
+"""
+
+
+def test_roberts_drill_count():
+    """Ashley Roberts plan: title card removed → 4 drills."""
+    drills = _extract_drill_blocks(
+        _ROBERTS_MARKDOWN, {}, {},
+        session_title="ANGK - METHODOLOGY - CUTBACKS FRONT POST AREA",
+    )
+    assert len(drills) == 4
+
+
+# Phil Wheddon: title card + 2 real drills → 2 drills
+_WHEDDON_MARKDOWN = """\
+## IGCC LEARNING CENTER- JANUARY 2026 TRAINING SESSION
+
+A SIMPLE HANDLING AND SHOT STOPPING SESSION WITH APPROPRIATE MOVEMENTS.
+DESIRED OUTCOME: DEALING WITH SHOTS FROM ANGLES, REPOSITIONING.
+
+## FOCUS;
+
+BALANCE & REPOSITIONING. SAVE SELECTION AND INTENTIONAL ACTIONS.
+WORK WITH THE GOALKEEPER TO MAKE SURE THEY ARE PHYSICALLY PREPARED.
+
+## FOCUS:
+
+IN POSSESSION: SWITCH THE POINT OF ATTACK (CB TO CB).
+QUALITY OF PASS AND SUPPORTING ANGLES.
+"""
+
+
+def test_wheddon_drill_count():
+    """Phil Wheddon plan: title card removed → 2 drills."""
+    drills = _extract_drill_blocks(
+        _WHEDDON_MARKDOWN, {}, {},
+        session_title="IGCC LEARNING CENTER- JANUARY 2026 TRAINING SESSION",
+    )
+    assert len(drills) == 2
+
+
+# Karsten Nielsen: title card + 3 real drills → 3 drills
+_NIELSEN_MARKDOWN = """\
+## Adv. Nat. GK Diploma - Session Plan
+
+Topic: Build-up play from the back.
+Coach: Karsten Nielsen
+
+## Coach-Goalkeeper(s)
+
+GK works with servers in penalty area.
+Focus on footwork, handling, and distribution.
+Technical warm-up with progressive difficulty.
+
+## Coach-Goalkeeper(s)-Field Players
+
+4v4+3 positional game with GK distribution.
+Build from the back through central corridors.
+Neutrals support team in possession.
+
+## Coach-Goalkeeper(s)-Team
+
+Full game scenario 7v7 with GK coaching focus.
+GK must play out from the back on every goal kick.
+Special scoring: bonus point if build-up includes GK distribution.
+"""
+
+
+def test_nielsen_drill_count():
+    """Karsten Nielsen plan: title card removed → 3 drills."""
+    drills = _extract_drill_blocks(
+        _NIELSEN_MARKDOWN, {}, {},
+        session_title="Adv. Nat. GK Diploma - Session Plan",
+    )
+    assert len(drills) == 3
+
+
+def test_gknexus_first_drill_has_subsections():
+    """GkNexus drills should have setup and progressions from Organisation/Progression(s)."""
+    drills = _extract_drill_blocks(
+        _GKNEXUS_MARKDOWN, {}, {},
+        session_title="Crossing session for GK: dealing with serves across goal",
+    )
+    # First drill should have setup description from Organisation
+    assert "Screen 1" in drills[0].setup.description
+    # Last drill should have setup description from last Organisation
+    assert "Screen 5" in drills[4].setup.description
+
+
+def test_repeated_organisation_creates_separate_drills():
+    """Each Organisation/Progression(s) pair should be a separate drill."""
+    sections = _split_into_header_sections(_GKNEXUS_MARKDOWN)
+    groups = _group_drill_sections(sections)
+    # Title card absorbs first Org/Prog pair as subsections.
+    # Remaining 4 Org repeats create 4 new auto-named drills = 5 total groups.
+    assert len(groups) == 5
+    # First group is the title card (with Org1+Prog1 as subsections)
+    assert "Crossing session" in groups[0]["name"]
+    assert "setup" in groups[0]["subsections"]
+    assert "progressions" in groups[0]["subsections"]
+    # Remaining groups have auto-generated names from Organisation body text
+    assert "Screen 2" in groups[1]["name"]
+    assert "Screen 3" in groups[2]["name"]
+    assert "Screen 4" in groups[3]["name"]
+    assert "Screen 5" in groups[4]["name"]
+
+
+# --- Cross-validation tests ---
+
+
+def test_cross_validate_fills_missing_colors():
+    """Rule 2: Fill missing player colors from CV circles."""
+    data = {
+        "player_positions": [
+            {"label": "A1", "x": 30, "y": 60, "role": "attacker"},
+        ],
+        "_cv_analysis": {
+            "circles_by_color": {"red": 1},
+            "total_circles": 1,
+            "estimated_pitch_view": None,
+            "circles": [{"x": 31, "y": 61, "color": "red"}],
+        },
+        "arrows": [],
+        "equipment": [],
+        "goals": [],
+        "pitch_view": None,
+    }
+    result = cross_validate(data)
+    assert result["player_positions"][0]["color"] == "red"
+
+
+def test_cross_validate_pitch_view_fallback():
+    """Rule 3: Pitch view falls back to CV estimate when VLM is null."""
+    data = {
+        "player_positions": [],
+        "_cv_analysis": {
+            "circles_by_color": {},
+            "total_circles": 0,
+            "estimated_pitch_view": "half_pitch",
+            "circles": [],
+        },
+        "arrows": [],
+        "equipment": [],
+        "goals": [],
+        "pitch_view": None,
+    }
+    result = cross_validate(data)
+    assert result["pitch_view"] == {"view_type": "half_pitch"}
+
+
+def test_cross_validate_moves_goals_from_equipment():
+    """Rule 4: full_goal in equipment gets moved to goals."""
+    data = {
+        "player_positions": [],
+        "_cv_analysis": {
+            "circles_by_color": {},
+            "total_circles": 0,
+            "estimated_pitch_view": None,
+            "circles": [],
+        },
+        "arrows": [],
+        "equipment": [
+            {"equipment_type": "full_goal", "x": 50, "y": 100},
+            {"equipment_type": "cone", "x": 30, "y": 40},
+        ],
+        "goals": [],
+        "pitch_view": None,
+    }
+    result = cross_validate(data)
+    assert len(result["equipment"]) == 1
+    assert result["equipment"][0]["equipment_type"] == "cone"
+    assert len(result["goals"]) == 1
+    assert result["goals"][0]["goal_type"] == "full_goal"
+
+
+def test_cross_validate_removes_degenerate_arrows():
+    """Rule 5: Arrows where start == end get removed."""
+    data = {
+        "player_positions": [],
+        "_cv_analysis": {
+            "circles_by_color": {},
+            "total_circles": 0,
+            "estimated_pitch_view": None,
+            "circles": [],
+        },
+        "arrows": [
+            {"start_x": 30, "start_y": 55, "end_x": 45, "end_y": 75},  # valid
+            {"start_x": 50, "start_y": 50, "end_x": 50, "end_y": 51},  # degenerate
+        ],
+        "equipment": [],
+        "goals": [],
+        "pitch_view": None,
+    }
+    result = cross_validate(data)
+    assert len(result["arrows"]) == 1
+    assert result["arrows"][0]["end_x"] == 45
+
+
+def test_cross_validate_no_cv_analysis():
+    """Without _cv_analysis, data passes through unchanged."""
+    data = {
+        "player_positions": [{"label": "A1", "x": 30, "y": 60}],
+        "arrows": [],
+        "equipment": [],
+        "goals": [],
+        "pitch_view": None,
+    }
+    result = cross_validate(data)
+    assert result == data

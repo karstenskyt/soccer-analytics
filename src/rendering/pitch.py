@@ -1,6 +1,7 @@
 """Render soccer pitch diagrams from DrillBlock data using mplsoccer."""
 
 import io
+from typing import Callable
 
 import matplotlib
 
@@ -8,9 +9,12 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt  # noqa: E402
 import matplotlib.patches as mpatches  # noqa: E402
-from mplsoccer import Pitch  # noqa: E402
+from mplsoccer import VerticalPitch  # noqa: E402
 
-from src.schemas.session_plan import DrillBlock, ArrowType, EquipmentType  # noqa: E402
+from src.schemas.session_plan import DrillBlock, ArrowType, EquipmentType, PlayerPosition  # noqa: E402
+
+# Type alias for the coordinate transform callable.
+CoordFn = Callable[[float, float], tuple[float, float]]
 
 # Role-based marker colors (consistent with soccer-diagrams conventions)
 ROLE_COLORS: dict[str, str] = {
@@ -53,6 +57,44 @@ EQUIPMENT_MARKERS: dict[str, dict] = {
 # Zone colors with alpha
 ZONE_DEFAULT_COLOR = "#BBDEFB"
 
+# ---------------------------------------------------------------------------
+# Opta pitch geometry for mapping view-relative schema coords (0-100)
+# into absolute Opta positions.  Opta: x = length 0-100, y = width 0-100.
+# Penalty area ≈ x 83-100, y 21-79 in Opta.
+# ---------------------------------------------------------------------------
+_VIEW_BOUNDS: dict[str, dict[str, float]] = {
+    "penalty_area": {"x_lo": 83.0, "x_hi": 100.0, "y_lo": 21.0, "y_hi": 79.0},
+    "half_pitch":   {"x_lo": 50.0, "x_hi": 100.0, "y_lo":  0.0, "y_hi": 100.0},
+    "third":        {"x_lo": 66.7, "x_hi": 100.0, "y_lo":  0.0, "y_hi": 100.0},
+}
+
+
+def _make_transform(view_type: str | None) -> CoordFn:
+    """Build a coordinate transform for the given pitch view.
+
+    Schema coordinates: x = width (0-100), y = length toward goal (0-100).
+    These are *view-relative*: 0-100 spans the visible area, not the full pitch.
+
+    Opta coordinates: x = pitch length (0-100), y = pitch width (0-100).
+
+    VerticalPitch axes: ax_x = opta_y (width, horizontal),
+                        ax_y = opta_x (length, vertical, goal at top).
+
+    The returned function converts (schema_x, schema_y) → (ax_x, ax_y).
+    """
+    bounds = _VIEW_BOUNDS.get(view_type or "", {})
+    x_lo = bounds.get("x_lo", 0.0)
+    x_hi = bounds.get("x_hi", 100.0)
+    y_lo = bounds.get("y_lo", 0.0)
+    y_hi = bounds.get("y_hi", 100.0)
+
+    def pc(sx: float, sy: float) -> tuple[float, float]:
+        opta_x = x_lo + (sy / 100.0) * (x_hi - x_lo)   # length
+        opta_y = y_lo + (sx / 100.0) * (y_hi - y_lo)    # width
+        return opta_y, opta_x  # VerticalPitch: (ax_x=width, ax_y=length)
+
+    return pc
+
 
 def _color_for_role(role: str | None) -> str:
     """Map a player role string to a hex color."""
@@ -62,14 +104,39 @@ def _color_for_role(role: str | None) -> str:
     return ROLE_COLORS.get(key, DEFAULT_COLOR)
 
 
-def _render_zones(ax, drill: DrillBlock) -> None:
+# Map diagram color names to hex colors for rendering
+_DIAGRAM_COLORS: dict[str, str] = {
+    "red": "#C62828",
+    "green": "#2E7D32",
+    "blue": "#1565C0",
+    "yellow": "#F9A825",
+    "white": "#FAFAFA",
+    "black": "#212121",
+    "orange": "#E65100",
+    "grey": "#757575",
+    "gray": "#757575",
+}
+
+
+def _color_for_player(pos: PlayerPosition) -> str:
+    """Get render color for a player: prefer explicit color, fallback to role."""
+    if pos.color:
+        hex_color = _DIAGRAM_COLORS.get(pos.color.lower())
+        if hex_color:
+            return hex_color
+    return _color_for_role(pos.role)
+
+
+def _render_zones(ax, drill: DrillBlock, pc: CoordFn) -> None:
     """Layer 1: Render semi-transparent zone rectangles."""
     for zone in drill.diagram.zones:
         color = zone.color or ZONE_DEFAULT_COLOR
-        x_min = min(zone.x1, zone.x2)
-        y_min = min(zone.y1, zone.y2)
-        width = abs(zone.x2 - zone.x1)
-        height = abs(zone.y2 - zone.y1)
+        c1x, c1y = pc(zone.x1, zone.y1)
+        c2x, c2y = pc(zone.x2, zone.y2)
+        x_min = min(c1x, c2x)
+        y_min = min(c1y, c2y)
+        width = abs(c2x - c1x)
+        height = abs(c2y - c1y)
         rect = mpatches.FancyBboxPatch(
             (x_min, y_min), width, height,
             boxstyle="round,pad=0.5",
@@ -78,22 +145,27 @@ def _render_zones(ax, drill: DrillBlock) -> None:
         )
         ax.add_patch(rect)
         if zone.label:
+            cx, cy = pc(
+                (zone.x1 + zone.x2) / 2,
+                (zone.y1 + zone.y2) / 2,
+            )
             ax.text(
-                (zone.x1 + zone.x2) / 2, (zone.y1 + zone.y2) / 2,
-                zone.label, fontsize=6, ha="center", va="center",
+                cx, cy, zone.label,
+                fontsize=6, ha="center", va="center",
                 color=color, alpha=0.6, zorder=1.5,
             )
 
 
-def _render_equipment(ax, drill: DrillBlock) -> None:
+def _render_equipment(ax, drill: DrillBlock, pc: CoordFn) -> None:
     """Layer 2: Render equipment markers."""
     for eq in drill.diagram.equipment:
         style = EQUIPMENT_MARKERS.get(
             eq.equipment_type,
             {"marker": "o", "color": "#9E9E9E", "size": 80},
         )
+        ex, ey = pc(eq.x, eq.y)
         ax.scatter(
-            eq.x, eq.y,
+            ex, ey,
             s=style["size"], c=style["color"],
             marker=style["marker"],
             edgecolors="black", linewidths=0.5,
@@ -101,35 +173,38 @@ def _render_equipment(ax, drill: DrillBlock) -> None:
         )
         # For gates, draw a line between the two points
         if eq.x2 is not None and eq.y2 is not None:
+            ex2, ey2 = pc(eq.x2, eq.y2)
             ax.plot(
-                [eq.x, eq.x2], [eq.y, eq.y2],
+                [ex, ex2], [ey, ey2],
                 color=style["color"], linewidth=2.0,
                 zorder=2, alpha=0.8,
             )
         if eq.label:
             ax.text(
-                eq.x, eq.y - 3, eq.label,
+                ex, ey - 2, eq.label,
                 fontsize=5, ha="center", va="top",
                 color="white", alpha=0.8, zorder=2.1,
             )
 
 
-def _render_goals(ax, drill: DrillBlock) -> None:
+def _render_goals(ax, drill: DrillBlock, pc: CoordFn) -> None:
     """Layer 2: Render goal markers at pitch edges."""
     for goal in drill.diagram.goals:
         width = goal.width_meters or 7.32  # standard goal width
-        # Scale width to Opta coordinates (approximate: 7.32m ≈ 10 Opta units)
-        half_w = (width / 7.32) * 5.0
+        # Scale width to Opta coordinates (7.32m on 68m wide pitch ≈ 10.8 units)
+        half_w = (width / 7.32) * 5.4
         if goal.goal_type == "mini_goal":
             half_w = 2.5
+        gx, gy = pc(goal.x, goal.y)
+        # Goal line runs along the width axis (ax_x)
         ax.plot(
-            [goal.x - half_w, goal.x + half_w], [goal.y, goal.y],
+            [gx - half_w, gx + half_w], [gy, gy],
             color="white", linewidth=3.0, solid_capstyle="round",
             zorder=2, alpha=0.9,
         )
 
 
-def _render_arrows(ax, drill: DrillBlock) -> set[str]:
+def _render_arrows(ax, drill: DrillBlock, pc: CoordFn) -> set[str]:
     """Layer 2.5: Render movement arrows with type-specific styles.
 
     Returns set of arrow type names used (for legend).
@@ -142,13 +217,13 @@ def _render_arrows(ax, drill: DrillBlock) -> set[str]:
         )
         used_types.add(arrow.arrow_type.value)
 
-        dx = arrow.end_x - arrow.start_x
-        dy = arrow.end_y - arrow.start_y
+        sx, sy = pc(arrow.start_x, arrow.start_y)
+        ex, ey = pc(arrow.end_x, arrow.end_y)
 
         ax.annotate(
             "",
-            xy=(arrow.end_x, arrow.end_y),
-            xytext=(arrow.start_x, arrow.start_y),
+            xy=(ex, ey),
+            xytext=(sx, sy),
             arrowprops=dict(
                 arrowstyle="->",
                 color=style["color"],
@@ -161,8 +236,8 @@ def _render_arrows(ax, drill: DrillBlock) -> set[str]:
 
         # Sequence number badge
         if arrow.sequence_number is not None:
-            mid_x = arrow.start_x + dx * 0.5
-            mid_y = arrow.start_y + dy * 0.5
+            mid_x = (sx + ex) / 2
+            mid_y = (sy + ey) / 2
             ax.scatter(
                 mid_x, mid_y, s=120, c="white",
                 edgecolors=style["color"], linewidths=1.0,
@@ -177,10 +252,10 @@ def _render_arrows(ax, drill: DrillBlock) -> set[str]:
 
         # Arrow label
         if arrow.label:
-            mid_x = arrow.start_x + dx * 0.5
-            mid_y = arrow.start_y + dy * 0.5
+            mid_x = (sx + ex) / 2
+            mid_y = (sy + ey) / 2
             ax.text(
-                mid_x, mid_y + 2, arrow.label,
+                mid_x, mid_y + 1, arrow.label,
                 fontsize=5, ha="center", va="bottom",
                 color=style["color"], alpha=0.8,
                 zorder=2.7,
@@ -189,35 +264,37 @@ def _render_arrows(ax, drill: DrillBlock) -> set[str]:
     return used_types
 
 
-def _render_balls(ax, drill: DrillBlock) -> None:
+def _render_balls(ax, drill: DrillBlock, pc: CoordFn) -> None:
     """Layer 3: Render ball positions as white circles."""
     for ball in drill.diagram.balls:
+        bx, by = pc(ball.x, ball.y)
         ax.scatter(
-            ball.x, ball.y,
+            bx, by,
             s=100, c="white", edgecolors="black",
             linewidths=1.5, zorder=3, marker="o",
         )
         if ball.label:
             ax.text(
-                ball.x, ball.y - 3, ball.label,
+                bx, by - 2, ball.label,
                 fontsize=5, ha="center", va="top",
                 color="white", zorder=3.1,
             )
 
 
-def _render_players(ax, drill: DrillBlock) -> None:
-    """Layer 3-4: Render player positions with role-colored markers."""
+def _render_players(ax, drill: DrillBlock, pc: CoordFn) -> None:
+    """Layer 3-4: Render player positions with color-based markers."""
     for pos in drill.diagram.player_positions:
-        color = _color_for_role(pos.role)
+        color = _color_for_player(pos)
+        px, py = pc(pos.x, pos.y)
         ax.scatter(
-            pos.x, pos.y,
+            px, py,
             s=MARKER_SIZE, c=color,
             edgecolors="white", linewidths=1.0,
             zorder=3,
         )
         ax.annotate(
             pos.label,
-            (pos.x, pos.y),
+            (px, py),
             fontsize=FONT_SIZE,
             ha="center", va="center",
             color="white", fontweight="bold",
@@ -258,14 +335,18 @@ def _render_legend(ax, used_arrow_types: set[str]) -> None:
 def render_drill_diagram(drill: DrillBlock, fmt: str = "png") -> bytes:
     """Render a pitch diagram for a drill block.
 
-    Renders all enriched elements in layers:
-    1. Zones (zorder=1)
-    2. Equipment (zorder=2)
-    3. Goals (zorder=2)
-    4. Arrows (zorder=2.5)
-    5. Balls (zorder=3)
-    6. Players (zorder=3-4)
-    7. Legend
+    Uses VerticalPitch with the correct view (full, half, penalty area)
+    based on ``drill.diagram.pitch_view``.  Schema coordinates (x=width,
+    y=length-toward-goal, both 0-100 within the view area) are rescaled
+    to absolute Opta positions so pitch markings align with drill elements.
+
+    Layers:
+        1. Zones  (zorder 1)
+        2. Equipment + Goals  (zorder 2)
+        3. Arrows  (zorder 2.5)
+        4. Balls  (zorder 3)
+        5. Players  (zorder 3-4)
+        6. Legend
 
     Args:
         drill: DrillBlock containing diagram data.
@@ -274,26 +355,54 @@ def render_drill_diagram(drill: DrillBlock, fmt: str = "png") -> bytes:
     Returns:
         Image bytes in the requested format.
     """
-    pitch = Pitch(pitch_type="opta", pitch_color="grass", line_color="white")
-    fig, ax = pitch.draw(figsize=(10, 7))
+    view_type = None
+    if drill.diagram.pitch_view:
+        view_type = drill.diagram.pitch_view.view_type
+
+    use_half = view_type in ("half_pitch", "penalty_area", "third")
+
+    pitch = VerticalPitch(
+        pitch_type="opta",
+        pitch_color="grass",
+        line_color="white",
+        half=use_half,
+    )
+
+    # Figsize tuned per view: penalty area is wide, full pitch is tall.
+    if view_type == "penalty_area":
+        figsize = (10, 7)
+    elif use_half:
+        figsize = (10, 10)
+    else:
+        figsize = (10, 14)
+
+    fig, ax = pitch.draw(figsize=figsize)
+
+    pc = _make_transform(view_type)
+
+    # Extra zoom for penalty-area view (half pitch shows opta_x 50-100;
+    # penalty area is opta_x ~83-100).  ax y-axis = opta_x on VerticalPitch.
+    if view_type == "penalty_area":
+        ax.set_ylim(78, 102)
+        ax.set_xlim(15, 85)
 
     # Layer 1: Zones
-    _render_zones(ax, drill)
+    _render_zones(ax, drill, pc)
 
     # Layer 2: Equipment
-    _render_equipment(ax, drill)
+    _render_equipment(ax, drill, pc)
 
     # Layer 2: Goals
-    _render_goals(ax, drill)
+    _render_goals(ax, drill, pc)
 
     # Layer 2.5: Arrows
-    used_arrow_types = _render_arrows(ax, drill)
+    used_arrow_types = _render_arrows(ax, drill, pc)
 
     # Layer 3: Balls
-    _render_balls(ax, drill)
+    _render_balls(ax, drill, pc)
 
     # Layer 3-4: Players
-    _render_players(ax, drill)
+    _render_players(ax, drill, pc)
 
     # Layer 5: Legend
     _render_legend(ax, used_arrow_types)

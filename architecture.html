@@ -154,7 +154,7 @@
 <div class="layout">
   <div class="sidebar">
     <h1>Soccer Analytics</h1>
-    <div class="subtitle">Architecture Explorer v0.5.0</div>
+    <div class="subtitle">Architecture Explorer v0.6.0</div>
 
     <h2>Platform</h2>
     <div class="platform-toggle">
@@ -302,16 +302,16 @@ const NODES = [
       sections: [
         { h: 'Description', p: 'Central coordination service running on CPU. Receives PDF uploads, runs the 6-stage pipeline (including ColPali visual indexing), and exposes REST API for querying stored session plans, semantic search, validated editing, and PDF export.' },
         { h: 'Base Image', p: 'python:3.12-slim (no GPU needed \u2014 VLM inference delegated to Ollama via HTTP)' },
-        { h: 'Key Dependencies', items: ['FastAPI >= 0.115', 'Docling >= 2.70 (PDF decomposition)', 'Pydantic >= 2.10 (schema validation)', 'SQLAlchemy[asyncio] >= 2.0', 'httpx >= 0.27 (Ollama + ColPali client)', 'reportlab >= 4.1 (PDF export)'] },
+        { h: 'Key Dependencies', items: ['FastAPI >= 0.115', 'Docling >= 2.70 (PDF decomposition)', 'Pydantic >= 2.10 (schema validation)', 'SQLAlchemy[asyncio] >= 2.0', 'httpx >= 0.27 (Ollama + ColPali client)', 'reportlab >= 4.1 (PDF export)', 'OpenCV (cv2) for CV preprocessing'] },
         { h: 'API Endpoints', items: ['POST /api/ingest \u2014 Upload & process PDF (6-stage pipeline)', 'GET /api/search?q=...&k=5 \u2014 Semantic visual search', 'GET /api/sessions \u2014 List session plans', 'GET /api/sessions/{id} \u2014 Get by ID', 'PUT /api/sessions/{id} \u2014 Validated update with tactical re-enrichment', 'GET /api/sessions/{id}/export \u2014 Export as coaching PDF', 'GET /api/sessions/{id}/drills \u2014 List drills', 'GET /api/sessions/{id}/drills/{idx}/diagram \u2014 Pitch diagram PNG/PDF', 'POST /api/render \u2014 Ad-hoc diagram rendering', 'GET /health \u2014 Health check'] },
       ],
       tags: [{ text: 'CPU Only', color: 'var(--blue)' }, { text: 'Async', color: 'var(--cyan)' }]
     }
   },
 
-  // Pipeline stages
+  // Pipeline stages — Row 1
   { id: 'stage1', label: '1. Decompose', sub: 'Docling PDF \u2192 MD + Images', icon: '\u{1F4D1}',
-    x: 60, y: 210, w: 180, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    x: 60, y: 200, w: 180, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
       title: 'Stage 1: PDF Decomposition', sub: 'src/pipeline/decompose.py',
       sections: [
@@ -323,48 +323,84 @@ const NODES = [
       tags: [{ text: 'Docling', color: 'var(--cyan)' }, { text: 'CPU', color: 'var(--blue)' }, { text: 'OCR', color: 'var(--text-dim)' }]
     }
   },
-  { id: 'stage2', label: '2. Describe', sub: 'Pass 1: Classification', icon: '\u{1F441}\u{FE0F}',
-    x: 260, y: 210, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+  { id: 'stage2', label: '2. Classify', sub: 'Pass 1: Diagram vs Non-Diagram', icon: '\u{1F441}\u{FE0F}',
+    x: 260, y: 200, w: 190, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
       title: 'Stage 2: VLM Diagram Classification (Pass 1)', sub: 'src/pipeline/describe.py',
       sections: [
-        { h: 'Description', p: 'Each extracted image is sent to Qwen3-VL via Ollama\'s native /api/chat endpoint (with think:false, json_mode). Pass 1 is lightweight: classifies images as tactical diagrams vs non-diagrams (photos, logos) and extracts a brief description.' },
+        { h: 'Description', p: 'Each extracted image is sent to the VLM via the VLM Backend abstraction. Pass 1 is lightweight: classifies images as tactical diagrams vs non-diagrams (photos, logos) and extracts a brief description.' },
         { h: 'VLM Prompt', items: ['System message enforcing JSON-only output (no <think> tags)', 'is_diagram classification (true/false)', 'Brief description of the image content', 'json_mode=true for reliable structured output'] },
         { h: 'JSON Extraction', items: ['<think> tag stripping (closed and unclosed)', '4-strategy parser: think-strip \u2192 direct \u2192 fence strip \u2192 brace counting', 'Trailing comma fix for malformed JSON', 'Retry with no-think prompt on failure'] },
         { h: 'Performance', p: '~2 sec per image on GPU (60x faster after Ollama native API migration).' },
       ],
-      tags: [{ text: 'Qwen3-VL', color: 'var(--amber)' }, { text: 'GPU', color: 'var(--red)' }, { text: 'Pass 1', color: 'var(--cyan)' }]
+      tags: [{ text: 'VLM Backend', color: 'var(--amber)' }, { text: 'GPU', color: 'var(--red)' }, { text: 'Pass 1', color: 'var(--cyan)' }]
     }
   },
-  { id: 'stage2b', label: '2b. Extract', sub: 'Pass 2+3: Full Structure', icon: '\u{1F4CD}',
-    x: 440, y: 210, w: 170, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+  { id: 'cv-preprocess', label: 'CV Preprocess', sub: 'OpenCV circle/line detection', icon: '\u{1F50D}',
+    x: 470, y: 200, w: 180, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
-      title: 'Stage 2b: Full Structured Extraction (Pass 2+3)', sub: 'src/pipeline/describe.py',
+      title: 'CV Preprocessing', sub: 'src/pipeline/cv_preprocess.py',
       sections: [
-        { h: 'Description', p: 'Comprehensive VLM pass on confirmed diagrams (is_diagram=true). Extracts ALL diagram elements: player positions, movement arrows, equipment, goals, balls, pitch zones, and pitch view type. Pass 3 conditionally retries if players found but arrows/equipment missing.' },
-        { h: 'Extraction Prompt', items: ['Opta coordinate system (x: 0\u2013100, y: 0\u2013100)', 'Label-to-role mapping: A\u2192attacker, D\u2192defender, GK\u2192goalkeeper, N\u2192neutral', 'Arrow types: run, pass, shot, dribble, cross, through_ball, movement', 'Equipment: cone, mannequin, pole, gate, hurdle, mini_goal, full_goal, flag', 'Compact inline example format (no verbose few-shot to save thinking tokens)'] },
-        { h: 'Validation', items: ['Clamp all coordinates to 0\u2013100 bounds', 'Reject empty/whitespace labels', 'Standardize roles via alias map', 'Deduplicate players by label', 'Fallback arrow/equipment types for unknown values'] },
-        { h: 'Key Technical Note', p: 'Qwen3-VL think:false does NOT disable thinking. Simplified prompt keeps thinking ~4K tokens, leaving room for ~1.5K content within the 8192 num_predict budget.' },
-        { h: 'Configuration', items: ['EXTRACT_POSITIONS env var (default: true)', 'max_tokens: 8192, temperature: 0.1', 'Pass 3 only fires if sparse result (players but no arrows/equipment)'] },
+        { h: 'Description', p: 'Computer vision preprocessing that runs on confirmed diagrams before VLM extraction. Detects colored circular markers (players), estimates pitch view from line patterns, and identifies background color. Returns a CVAnalysis dataclass for VLM context injection.' },
+        { h: 'Circle Detection', items: ['HSV color space segmentation for red, green, blue, yellow, grey', 'Morphological cleanup (close + open) to remove noise', 'Contour analysis with circularity filter (\u2265 0.4)', 'Area bounds: 100\u20135000 px\u00B2 at 1000px-wide scale', 'Deduplication within 1.5% distance threshold'] },
+        { h: 'Pitch Line Analysis', items: ['Canny edge detection (50, 150 thresholds)', 'Hough line transform (50px threshold, 50px min length)', 'Horizontal/vertical classification by angle', 'Midline detection \u2192 half_pitch view estimate', 'Upper rectangle pattern \u2192 penalty_area view estimate'] },
+        { h: 'Background Detection', items: ['5-point sampling: 4 corners + center', 'HSV hue check for green pitch background', 'Value-based white vs grey classification'] },
+        { h: 'Output', items: ['CVAnalysis: circles[], circles_by_color{}, has_pitch_lines, estimated_pitch_view, dominant_background', 'format_cv_context() \u2192 text string injected into VLM prompts'] },
       ],
-      tags: [{ text: 'Qwen3-VL', color: 'var(--amber)' }, { text: 'GPU', color: 'var(--red)' }, { text: 'Pass 2+3', color: 'var(--cyan)' }]
+      tags: [{ text: 'OpenCV', color: 'var(--cyan)' }, { text: 'CPU', color: 'var(--blue)' }, { text: 'HSV', color: 'var(--text-dim)' }]
+    }
+  },
+  { id: 'stage2b', label: '2b. Multi-Pass', sub: '4 parallel VLM passes', icon: '\u{1F4CD}',
+    x: 670, y: 200, w: 170, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    detail: {
+      title: 'Stage 2b: Multi-Pass Structured Extraction', sub: 'src/pipeline/describe.py',
+      sections: [
+        { h: 'Description', p: 'Four focused VLM extraction passes run concurrently via asyncio.gather() on each confirmed diagram. CV preprocessing context is injected into prompts for passes that benefit from it (players, equipment, pitch view). Results are merged into a single diagram dict.' },
+        { h: '4 Parallel Passes', items: ['Pass 2a \u2014 Players: positions, labels, roles, colors (with CV circle context)', 'Pass 2b \u2014 Arrows: movement arrows with types (run, pass, shot, dribble, etc.)', 'Pass 2c \u2014 Equipment + Goals: cones, mannequins, goals, balls (with CV context)', 'Pass 2d \u2014 Pitch View: view type classification and dimensions (with CV line context)'] },
+        { h: 'CV Context Injection', p: 'format_cv_context() produces a text summary like "CV detected 8 red circles at (30,40), (50,60)..." which is appended to the VLM prompt. This grounds the VLM with objective pixel-level data.' },
+        { h: 'Merge Strategy', p: 'Results from all 4 passes are merged into a single dict. Each pass writes to non-overlapping keys (player_positions, arrows, equipment+goals, pitch_view). _cv_analysis is attached for downstream cross-validation.' },
+        { h: 'Validation', items: ['Clamp all coordinates to 0\u2013100 bounds', 'Reject empty/whitespace labels', 'Standardize roles via alias map (gk\u2192goalkeeper, fwd\u2192attacker, etc.)', 'Deduplicate players by label', 'Fallback arrow/equipment types for unknown values'] },
+        { h: 'Configuration', items: ['EXTRACT_POSITIONS env var (default: true)', 'max_tokens: 8192, temperature: 0.1', 'Opta coordinate system (x: 0\u2013100, y: 0\u2013100)'] },
+      ],
+      tags: [{ text: 'VLM Backend', color: 'var(--amber)' }, { text: 'GPU', color: 'var(--red)' }, { text: '4 Passes', color: 'var(--cyan)' }, { text: 'asyncio', color: 'var(--green)' }]
+    }
+  },
+
+  // Pipeline stages — Row 2
+  { id: 'cross-validate', label: 'Cross-Validate', sub: 'CV \u2194 VLM conflict resolution', icon: '\u{2696}\u{FE0F}',
+    x: 60, y: 280, w: 195, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    detail: {
+      title: 'Cross-Validation', sub: 'src/pipeline/cross_validate.py',
+      sections: [
+        { h: 'Description', p: 'Applies 5 conflict resolution rules between CV preprocessing results and VLM extraction output. Pops the _cv_analysis key from the diagram data dict and uses it to validate, correct, and clean the VLM results.' },
+        { h: '5 Conflict Resolution Rules', items: [
+          'Rule 1 \u2014 Player count: Warn if CV circle count and VLM player count differ by >2 (CV is more reliable for counting)',
+          'Rule 2 \u2014 Player colors: Fill missing VLM player colors from nearest CV circle (within 15% distance threshold)',
+          'Rule 3 \u2014 Pitch view fallback: Use CV estimated_pitch_view if VLM returns null',
+          'Rule 4 \u2014 Goal migration: Move equipment_type=="full_goal" items from equipment[] to goals[]',
+          'Rule 5 \u2014 Degenerate arrows: Remove arrows where start \u2248 end (dx + dy < 2 units)'
+        ] },
+        { h: 'Design', p: 'Pure function: takes merged diagram dict, returns cleaned dict. No side effects. The _cv_analysis key is popped (consumed) so it does not leak into downstream schema extraction.' },
+      ],
+      tags: [{ text: '5 Rules', color: 'var(--cyan)' }, { text: 'CPU', color: 'var(--blue)' }, { text: 'Validation', color: 'var(--green)' }]
     }
   },
   { id: 'stage3', label: '3. Extract', sub: 'Schema Extraction', icon: '\u{1F9E9}',
-    x: 630, y: 210, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    x: 275, y: 280, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
       title: 'Stage 3: Schema Extraction', sub: 'src/pipeline/extract.py',
       sections: [
-        { h: 'Description', p: 'Parses Docling markdown into structured DrillBlock models. Uses header grouping to identify drills and their sub-sections.' },
+        { h: 'Description', p: 'Parses Docling markdown into structured DrillBlock models. Uses header grouping to identify drills and their sub-sections. Merges cross-validated diagram data into each drill.' },
         { h: 'Header Classification', items: ['Drill headers: Component names (e.g. "Coach-Goalkeeper(s)")', 'Sub-section headers: Setup, Sequence, Coaching Points, Variations, Rules', 'Non-drill headers: AUTHORS, PART ONE, ACKNOWLEDGMENT (filtered)'] },
         { h: 'Metadata Extraction', items: ['Title from first # or ## header', 'Category/Difficulty from inline "Category: X Difficulty: Y" pattern', 'Author from ## AUTHORS section or "Author: X" line'] },
+        { h: 'Enriched Types', items: ['PlayerPosition with label, x, y, role, color', 'MovementArrow with start/end coords, arrow_type, from/to labels', 'EquipmentObject, GoalInfo, BallPosition, PitchZone, PitchView'] },
         { h: 'Results', p: 'Session Plan: 4 drills. Two Versus One (40 pages): 17 drills with sub-sections grouped correctly.' },
       ],
       tags: [{ text: 'Pydantic', color: 'var(--green)' }, { text: 'Regex', color: 'var(--text-dim)' }]
     }
   },
   { id: 'stage4', label: '4. Enrich', sub: 'Tactical Context', icon: '\u{26BD}',
-    x: 810, y: 210, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    x: 455, y: 280, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
       title: 'Stage 4: Tactical Enrichment', sub: 'src/pipeline/validate.py',
       sections: [
@@ -377,8 +413,10 @@ const NODES = [
       tags: [{ text: '2v1', color: 'var(--green)' }, { text: '5 Lanes', color: 'var(--cyan)' }, { text: '9 Elements', color: 'var(--amber)' }]
     }
   },
+
+  // Pipeline stages — Row 3
   { id: 'stage5', label: '5. Store', sub: 'PostgreSQL Persistence', icon: '\u{1F4BE}',
-    x: 810, y: 310, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    x: 635, y: 280, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
       title: 'Stage 5: PostgreSQL Storage', sub: 'src/pipeline/store.py',
       sections: [
@@ -391,7 +429,7 @@ const NODES = [
     }
   },
   { id: 'stage6', label: '6. Index', sub: 'ColPali Visual Indexing', icon: '\u{1F50D}',
-    x: 810, y: 400, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
+    x: 815, y: 280, w: 160, h: 50, layer: 'pipeline', fill: '#1a2a2e', stroke: '#06b6d4',
     detail: {
       title: 'Stage 6: ColPali Visual Indexing', sub: 'Best-effort, non-fatal',
       sections: [
@@ -404,12 +442,25 @@ const NODES = [
   },
 
   // VLM Service
+  { id: 'vlm-backend', label: 'VLM Backend', sub: 'Protocol abstraction', icon: '\u{1F517}',
+    x: 280, y: 380, w: 170, h: 44, layer: 'vlm', fill: '#2a2010', stroke: '#f59e0b',
+    detail: {
+      title: 'VLM Backend Abstraction', sub: 'src/pipeline/vlm_backend.py',
+      sections: [
+        { h: 'Description', p: 'Protocol-based abstraction layer for vision-language model inference. Defines a VLMBackend Protocol with a single chat() method. Allows swapping inference providers without changing pipeline code.' },
+        { h: 'Protocol Interface', items: ['chat(messages, max_tokens, temperature, json_mode, think) \u2192 str', 'messages: list of {role, content} dicts with optional base64 images', 'Returns raw text response from the VLM'] },
+        { h: 'OllamaBackend', items: ['Implements VLMBackend Protocol', 'Uses native Ollama /api/chat endpoint', 'Configures think:false, stream:false', 'json_mode mapped to format:"json"', 'Base64 images embedded in message content'] },
+        { h: 'Factory', p: 'create_vlm_backend(ollama_url, vlm_model) \u2192 VLMBackend. Currently returns OllamaBackend. Future: OpenRouter, vLLM, or local transformers backends.' },
+      ],
+      tags: [{ text: 'Protocol', color: 'var(--amber)' }, { text: 'Swappable', color: 'var(--green)' }]
+    }
+  },
   { id: 'ollama', label: 'Ollama VLM', sub: ':11434 \u2022 GPU', icon: '\u{1F9E0}',
-    x: 280, y: 330, w: 180, h: 50, layer: 'vlm', fill: '#2a2010', stroke: '#f59e0b',
+    x: 480, y: 380, w: 180, h: 50, layer: 'vlm', fill: '#2a2010', stroke: '#f59e0b',
     detail: {
       title: 'Ollama VLM Service', sub: 'Port 11434 \u2022 GPU Container',
       sections: [
-        { h: 'Description', p: 'Runs Qwen3-VL vision-language model with full GPU offloading. Uses native Ollama /api/chat endpoint with think:false and configurable json_mode.' },
+        { h: 'Description', p: 'Runs Qwen3-VL vision-language model with full GPU offloading. Accessed through VLM Backend abstraction via native /api/chat endpoint with think:false and configurable json_mode.' },
         { h: 'Model (Windows)', items: ['qwen3-vl:8b \u2014 Q4_K_M quantization', 'Download: 6.1 GB', 'VRAM: ~6 GB (model weights + KV cache)', '37/37 layers offloaded to CUDA'] },
         { h: 'Model (DGX)', items: ['qwen3-vl:32b \u2014 larger model for higher accuracy', 'Leverages Blackwell GPU (128 GB unified memory)'] },
         { h: 'API', p: 'POST /api/chat with base64-encoded images in the messages array. Uses think:false, stream:false, and optional format:json for classification pass.' },
@@ -421,7 +472,7 @@ const NODES = [
 
   // Retrieval
   { id: 'colpali', label: 'ColPali Service', sub: ':8005 \u2022 GPU \u2022 ColQwen2', icon: '\u{1F9E0}',
-    x: 540, y: 420, w: 210, h: 50, layer: 'retrieval', fill: '#2a1020', stroke: '#ef4444',
+    x: 700, y: 380, w: 210, h: 50, layer: 'retrieval', fill: '#2a1020', stroke: '#ef4444',
     detail: {
       title: 'ColPali Visual Retrieval', sub: 'Port 8005 \u2022 GPU Container',
       sections: [
@@ -436,7 +487,7 @@ const NODES = [
 
   // Storage
   { id: 'postgres', label: 'PostgreSQL + pgvector', sub: ':5434 \u2022 pgvector:pg16', icon: '\u{1F5C3}\u{FE0F}',
-    x: 560, y: 330, w: 210, h: 50, layer: 'storage', fill: '#1f1a30', stroke: '#a855f7',
+    x: 700, y: 460, w: 210, h: 50, layer: 'storage', fill: '#1f1a30', stroke: '#a855f7',
     detail: {
       title: 'PostgreSQL + pgvector', sub: 'Port 5434 \u2022 pgvector/pgvector:pg16',
       sections: [
@@ -451,13 +502,13 @@ const NODES = [
 
   // Rendering
   { id: 'pitch-renderer', label: 'Pitch Diagram', sub: 'mplsoccer \u2022 Opta coords', icon: '\u{1F3A8}',
-    x: 60, y: 330, w: 180, h: 50, layer: 'rendering', fill: '#1a2540', stroke: '#3b82f6',
+    x: 60, y: 380, w: 180, h: 50, layer: 'rendering', fill: '#1a2540', stroke: '#3b82f6',
     detail: {
       title: 'Pitch Diagram Renderer', sub: 'src/rendering/pitch.py',
       sections: [
-        { h: 'Description', p: 'Renders soccer pitch diagrams using mplsoccer with Opta-style coordinates (0\u2013100). Supports enriched elements: players, movement arrows, equipment, goals, balls, and zones.' },
+        { h: 'Description', p: 'Renders soccer pitch diagrams using mplsoccer with Opta-style coordinates (0\u2013100). Supports enriched elements: players, movement arrows, equipment, goals, balls, and zones with layered z-order rendering.' },
+        { h: 'Rendering Order (z-order)', items: ['1. Pitch zones (semi-transparent fills)', '2. Equipment markers (cones, mannequins, etc.)', '3. Goals (full-size and mini)', '4. Movement arrows (run, pass, shot, dribble)', '5. Balls', '6. Player markers (colored by role)', '7. Legend (auto-generated for arrow types)'] },
         { h: 'Player Colors', items: ['Goalkeeper: Amber (#F9A825)', 'Attacker: Blue (#1565C0)', 'Defender: Red (#C62828)', 'Neutral: Gray (#757575)'] },
-        { h: 'Enriched Elements', items: ['Movement arrows: run (solid), pass (dashed), shot (thick), dribble (dash-dot)', 'Equipment: cones, mannequins, poles, gates, hurdles', 'Goals, balls, pitch zones with semi-transparent fills', 'Auto-generated legend for arrow types'] },
         { h: 'Output Formats', items: ['PNG: Raster image for embedding', 'PDF: Vector format for printing'] },
         { h: 'API', p: 'render_drill_diagram(drill, format) \u2192 bytes' },
       ],
@@ -465,7 +516,7 @@ const NODES = [
     }
   },
   { id: 'pdf-report', label: 'PDF Report', sub: 'reportlab \u2022 coaching PDF', icon: '\u{1F4D1}',
-    x: 60, y: 400, w: 180, h: 50, layer: 'rendering', fill: '#1a2540', stroke: '#3b82f6',
+    x: 60, y: 460, w: 180, h: 50, layer: 'rendering', fill: '#1a2540', stroke: '#3b82f6',
     detail: {
       title: 'PDF Report Generator', sub: 'src/rendering/pdf_report.py',
       sections: [
@@ -480,7 +531,7 @@ const NODES = [
 
   // MCP Tools
   { id: 'mcp-parse', label: 'parse_session_plan', sub: 'List/get session plans', icon: '\u{1F4CB}',
-    x: 60, y: 510, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
+    x: 60, y: 560, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
     detail: {
       title: 'MCP: parse_session_plan', sub: 'src/mcp/server.py',
       sections: [
@@ -492,7 +543,7 @@ const NODES = [
     }
   },
   { id: 'mcp-analyze', label: 'analyze_tactical_drill', sub: 'Drill analysis + context', icon: '\u{1F3AF}',
-    x: 60, y: 564, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
+    x: 60, y: 614, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
     detail: {
       title: 'MCP: analyze_tactical_drill', sub: 'src/mcp/server.py',
       sections: [
@@ -503,7 +554,7 @@ const NODES = [
     }
   },
   { id: 'mcp-render', label: 'render_drill_diagram', sub: 'Pitch diagram PNG/PDF', icon: '\u{1F3A8}',
-    x: 60, y: 618, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
+    x: 60, y: 668, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
     detail: {
       title: 'MCP: render_drill_diagram', sub: 'src/mcp/server.py',
       sections: [
@@ -515,7 +566,7 @@ const NODES = [
     }
   },
   { id: 'mcp-export', label: 'export_session_pdf', sub: 'Full coaching PDF export', icon: '\u{1F4E4}',
-    x: 60, y: 672, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
+    x: 60, y: 722, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
     detail: {
       title: 'MCP: export_session_pdf', sub: 'src/mcp/server.py',
       sections: [
@@ -528,7 +579,7 @@ const NODES = [
     }
   },
   { id: 'mcp-search', label: 'search_drills', sub: 'Semantic search via ColPali', icon: '\u{1F50E}',
-    x: 60, y: 726, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
+    x: 60, y: 776, w: 190, h: 44, layer: 'mcp', fill: '#1a3a2a', stroke: '#22c55e',
     detail: {
       title: 'MCP: search_drills', sub: 'src/mcp/server.py',
       sections: [
@@ -560,19 +611,19 @@ const CONNECTIONS = [
   { from: 'pdf-upload', to: 'orchestrator', type: 'data', label: 'PDF file' },
   { from: 'orchestrator', to: 'stage1', type: 'data', label: 'Pipeline start' },
   { from: 'stage1', to: 'stage2', type: 'data', label: 'MD + images' },
-  { from: 'stage2', to: 'stage2b', type: 'data', label: 'Confirmed diagrams' },
-  { from: 'stage2b', to: 'stage3', type: 'data', label: 'Merged descriptions' },
+  { from: 'stage2', to: 'cv-preprocess', type: 'data', label: 'Confirmed diagrams' },
+  { from: 'cv-preprocess', to: 'stage2b', type: 'data', label: 'CVAnalysis context' },
+  { from: 'stage2b', to: 'cross-validate', type: 'data', label: 'Merged extractions' },
+  { from: 'cross-validate', to: 'stage3', type: 'data', label: 'Validated diagrams' },
   { from: 'stage3', to: 'stage4', type: 'data', label: 'DrillBlocks' },
   { from: 'stage4', to: 'stage5', type: 'data', label: 'SessionPlan' },
   { from: 'stage5', to: 'stage6', type: 'data', label: 'plan_id + PDF path' },
 
-  // GPU calls
-  { from: 'stage2', to: 'ollama', type: 'gpu', label: 'Base64 images' },
-  { from: 'ollama', to: 'stage2', type: 'gpu', label: 'Classification' },
-  { from: 'stage2b', to: 'ollama', type: 'gpu', label: 'Diagram images' },
-  { from: 'ollama', to: 'stage2b', type: 'gpu', label: 'Structure JSON' },
+  // VLM Backend calls
+  { from: 'stage2', to: 'vlm-backend', type: 'gpu', label: 'classify_diagrams()' },
+  { from: 'stage2b', to: 'vlm-backend', type: 'gpu', label: '4\u00D7 parallel passes' },
+  { from: 'vlm-backend', to: 'ollama', type: 'gpu', label: '/api/chat' },
   { from: 'stage6', to: 'colpali', type: 'gpu', label: 'POST /index' },
-  { from: 'colpali', to: 'stage6', type: 'gpu', label: 'indexed=true' },
 
   // Storage
   { from: 'stage5', to: 'postgres', type: 'store', label: 'INSERT/UPSERT' },

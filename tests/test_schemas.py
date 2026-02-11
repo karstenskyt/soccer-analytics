@@ -31,6 +31,12 @@ def test_player_position_creation():
     assert pos.label == "GK"
     assert pos.x == 50.0
     assert pos.y == 5.0
+    assert pos.color is None
+
+
+def test_player_position_with_color():
+    pos = PlayerPosition(label="A1", x=30.0, y=60.0, role="attacker", color="red")
+    assert pos.color == "red"
 
 
 def test_drill_block_defaults():
@@ -202,3 +208,97 @@ def test_equipment_type_enum_values():
     assert EquipmentType.CONE.value == "cone"
     assert EquipmentType.MANNEQUIN.value == "mannequin"
     assert EquipmentType.FULL_GOAL.value == "full_goal"
+
+
+# --- New schema fields tests ---
+
+
+def test_desired_outcome_on_metadata():
+    meta = SessionMetadata(
+        title="Test",
+        desired_outcome="Improve positioning and balance",
+    )
+    assert meta.desired_outcome == "Improve positioning and balance"
+
+
+def test_desired_outcome_default_none():
+    meta = SessionMetadata(title="Test")
+    assert meta.desired_outcome is None
+
+
+def test_drill_type_and_directional():
+    drill = DrillBlock(
+        name="Test Drill",
+        drill_type="Game-Related Practice",
+        directional=True,
+    )
+    assert drill.drill_type == "Game-Related Practice"
+    assert drill.directional is True
+
+
+def test_drill_type_defaults_none():
+    drill = DrillBlock(name="Test Drill")
+    assert drill.drill_type is None
+    assert drill.directional is None
+
+
+# --- Gemini 5c fixture validation tests ---
+
+
+from tests.fixtures.gemini_extractions import (
+    GEMINI_GKNEXUS,
+    GEMINI_NIELSEN,
+    GEMINI_ROBERTS,
+    GEMINI_WHEDDON,
+    ALL_GEMINI_FIXTURES,
+)
+
+
+def test_gemini_gknexus_validates():
+    """GkNexus session plan parses through model_validate cleanly."""
+    plan = SessionPlan.model_validate(GEMINI_GKNEXUS)
+    assert plan.metadata.title == "GkNexus Goalkeeper Session"
+    assert len(plan.drills) == 2
+    assert plan.drills[0].drill_type == "Warm-Up"
+    assert plan.drills[1].drill_type == "Game-Related Practice"
+
+
+def test_gemini_nielsen_validates():
+    """Karsten Nielsen session plan parses through model_validate cleanly."""
+    plan = SessionPlan.model_validate(GEMINI_NIELSEN)
+    assert plan.metadata.title == "Building Out From the Back — 4v4+3 Positional Play"
+    assert len(plan.drills) == 2
+    assert plan.metadata.desired_outcome is not None
+    assert "positional rotations" in plan.metadata.desired_outcome
+
+
+def test_gemini_roberts_validates():
+    """Ashley Roberts session plan parses through model_validate cleanly."""
+    plan = SessionPlan.model_validate(GEMINI_ROBERTS)
+    assert plan.metadata.title == "Wide Play: Crossing & Cutback Finishing"
+    assert len(plan.drills) == 1
+    assert plan.drills[0].directional is True
+
+
+def test_gemini_wheddon_validates():
+    """Phil Wheddon session plan parses through model_validate cleanly."""
+    plan = SessionPlan.model_validate(GEMINI_WHEDDON)
+    assert plan.metadata.title == "Goalkeeper Handling & Shot-Stopping"
+    assert plan.metadata.desired_outcome is not None
+    assert "shots from angles" in plan.metadata.desired_outcome
+
+
+def test_gemini_plans_have_enriched_diagrams():
+    """All Gemini fixtures have non-empty enriched diagram data."""
+    for fixture in ALL_GEMINI_FIXTURES:
+        plan = SessionPlan.model_validate(fixture)
+        for drill in plan.drills:
+            assert len(drill.diagram.player_positions) > 0, (
+                f"Drill '{drill.name}' has no player positions"
+            )
+            assert len(drill.diagram.arrows) > 0, (
+                f"Drill '{drill.name}' has no arrows"
+            )
+            assert len(drill.diagram.equipment) > 0, (
+                f"Drill '{drill.name}' has no equipment"
+            )
